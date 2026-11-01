@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 100 824 824" width="1024" height="1024"><defs>
+    <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+    <clipPath id="workSide"><rect x="512" y="0" width="512" height="1024"/></clipPath>
+    <clipPath id="litPanel"><rect x="512" y="276" width="296" height="390" rx="26"/></clipPath>
+    <filter id="blur12" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="12"/></filter>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="9" stdDeviation="10" flood-opacity=".38"/></filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#27304f"/><stop offset="1" stop-color="#0c1022"/></linearGradient>
+    <linearGradient id="lit" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#47b6ff"/><stop offset="1" stop-color="#6a4dff"/></linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".45" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <pattern id="hatch" width="34" height="34" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="34" height="34" fill="#151b31"/><rect width="12" height="34" fill="#232b48"/>
+    </pattern>
+    <radialGradient id="ember"><stop offset="0" stop-color="#ffd27a"/><stop offset=".45" stop-color="#ff9f2e" stop-opacity=".75"/><stop offset="1" stop-color="#ff7a00" stop-opacity="0"/></radialGradient>
+    <linearGradient id="streak" gradientUnits="userSpaceOnUse" x1="560" y1="0" x2="800" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".3" stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff" stop-opacity=".2"/>
+    </linearGradient>
+    <!-- macOS arrow proportions: 45° head, notch at three quarters of the left edge. -->
+    <path id="arrow" d="M0 0 L0 22.6 L5.3 17.5 L8.8 25.6 L12.3 24.1 L8.9 16.3 L16 16.3 Z"/>
+  </defs><!-- Recoil streaks (fan) -->
+    <g clip-path="url(#litPanel)" fill="none" stroke="url(#streak)" stroke-linecap="round">
+      <path d="M558 388 C 606 330, 686 305, 776 312" stroke-width="5"/>
+      <path d="M562 396 C 626 350, 706 340, 796 352" stroke-width="4" opacity=".8"/>
+      <path d="M566 404 C 636 378, 716 380, 796 398" stroke-width="3" opacity=".6"/>
+    </g>
+    <!-- Pointer: black body, white border outside it, rounded joins, soft shadow -->
+    <g><g transform="translate(546 410) scale(9.5)" stroke-linejoin="round" stroke-linecap="round">
+      <use href="#arrow" fill="#fff" stroke="#fff" stroke-width="2.7"/>
+      <use href="#arrow" fill="#000" stroke="#000" stroke-width=".55"/>
+    </g></g>
+  </svg>

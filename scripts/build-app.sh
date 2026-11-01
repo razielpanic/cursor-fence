@@ -15,7 +15,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp "$BIN" "$APP/Contents/MacOS/CursorFence"
-[[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+# Icon Composer source → Assets.car (Liquid Glass) plus an .icns fallback.
+xcrun actool Resources/AppIcon.icon --compile "$APP/Contents/Resources" --platform macosx \
+  --minimum-deployment-target 26.0 --app-icon AppIcon \
+  --output-partial-info-plist "$APP/../AppIcon-partial.plist" >/dev/null
 
 codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$APP"
 codesign --verify --strict --verbose=1 "$APP"
