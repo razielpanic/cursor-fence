@@ -81,7 +81,6 @@ final class FenceEngine: @unchecked Sendable {
     private let suspended = Atomic<Bool>(false)
     private let lifecycle = NSLock()
     private var tap: CFMachPort?
-    private var sessionTap: CFMachPort?
     private var runLoop: CFRunLoop?
     private var watchdog: DispatchSourceTimer?
 
@@ -171,24 +170,18 @@ final class FenceEngine: @unchecked Sendable {
                                  .otherMouseDragged, .flagsChanged, .leftMouseDown, .leftMouseUp,
                                  .rightMouseDown, .rightMouseUp]
             .reduce(0) { $0 | (1 << $1.rawValue) }
-        // Two taps, each event handled once. Hardware events at the HID tap:
-        // corrections made at the session level lose to motion already in
-        // flight, and the pointer walked through corners and drags (the dev Mac,
-        // 2026-11-01: 455 breaches, against 0 with a HID tap). Posted events
-        // at the session tap: Screen Sharing's ScreensharingAgent posts there,
-        // so a HID tap never sees remote control (compositor, 2026-11-01).
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
-        guard let port = CGEvent.tapCreate(tap: .cghidEventTap, place: .headInsertEventTap,
+        // Session level, not HID: Screen Sharing's ScreensharingAgent posts
+        // pointer events there, so a HID tap never sees remote control
+        // (measured on the compositor, 2026-11-01). Hardware events pass
+        // through the session tap too.
+        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
                                            options: .defaultTap, eventsOfInterest: mask,
-                                           callback: hidTapCallback, userInfo: refcon),
-              let session = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
-                                              options: .defaultTap, eventsOfInterest: mask,
-                                              callback: sessionTapCallback, userInfo: refcon) else {
+                                           callback: tapCallback,
+                                           userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
             log.error("tapCreate failed (Accessibility not granted?)")
             return false
         }
         tap = port
-        sessionTap = session
         Self.zeroSuppressionInterval()
         lastTapEventNanos.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
 
@@ -196,10 +189,9 @@ final class FenceEngine: @unchecked Sendable {
         let thread = Thread { [self] in
             let rl = CFRunLoopGetCurrent()!
             // Read under start()'s lock, which is held until `ready` fires.
-            guard let port = self.tap, let session = self.sessionTap else { ready.signal(); return }
-            for p in [port, session] {
-                CFRunLoopAddSource(rl, CFMachPortCreateRunLoopSource(nil, p, 0), .commonModes)
-            }
+            guard let port = self.tap else { ready.signal(); return }
+            let source = CFMachPortCreateRunLoopSource(nil, port, 0)
+            CFRunLoopAddSource(rl, source, .commonModes)
             let timer = CFRunLoopTimerCreateWithHandler(nil, .greatestFiniteMagnitude, 1.0 / 240, 0, 0) { [unowned self] _ in
                 self.recoilTick()
             }
@@ -207,7 +199,6 @@ final class FenceEngine: @unchecked Sendable {
             self.recoilTimer = timer
             self.runLoop = rl
             CGEvent.tapEnable(tap: port, enable: true)
-            CGEvent.tapEnable(tap: session, enable: true)
             ready.signal()
             CFRunLoopRun()
         }
@@ -226,13 +217,12 @@ final class FenceEngine: @unchecked Sendable {
         defer { lifecycle.unlock() }
         watchdog?.cancel()
         watchdog = nil
-        for port in [tap, sessionTap].compactMap({ $0 }) {
+        if let port = tap {
             CGEvent.tapEnable(tap: port, enable: false)
             CFMachPortInvalidate(port)
         }
         if let rl = runLoop { CFRunLoopStop(rl) }
         tap = nil
-        sessionTap = nil
         runLoop = nil
         associate(reason: "stop")
     }
@@ -303,9 +293,7 @@ final class FenceEngine: @unchecked Sendable {
             // Let go first, then come back.
             associate(reason: "tap disabled")
             stats.tapRestarts.add(1, ordering: .relaxed)
-            for port in [tap, sessionTap].compactMap({ $0 }) where !CGEvent.tapIsEnabled(tap: port) {
-                CGEvent.tapEnable(tap: port, enable: true)
-            }
+            if let port = tap { CGEvent.tapEnable(tap: port, enable: true) }
             return Unmanaged.passUnretained(event)
 
         case .flagsChanged:
@@ -455,7 +443,7 @@ final class FenceEngine: @unchecked Sendable {
             guard let self, self.isDisassociated else { return }
             ticks += 1
             var reason: String?
-            if self.lifecycle.withLock({ [self.tap, self.sessionTap] }).contains(where: { $0.map { !CGEvent.tapIsEnabled(tap: $0) } ?? false }) {
+            if let port = self.lifecycle.withLock({ self.tap }), !CGEvent.tapIsEnabled(tap: port) {
                 reason = "tap disabled"
             }
             let hidIdle = [CGEventType.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
@@ -475,22 +463,7 @@ final class FenceEngine: @unchecked Sendable {
     }
 }
 
-/// Hardware events only; posted events pass on to the session tap.
-private let hidTapCallback: CGEventTapCallBack = { _, type, event, refcon in
-    guard let refcon, isTapControl(type) || !isPosted(event) else { return Unmanaged.passUnretained(event) }
+private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
+    guard let refcon else { return Unmanaged.passUnretained(event) }
     return Unmanaged<FenceEngine>.fromOpaque(refcon).takeUnretainedValue().handle(type: type, event: event)
-}
-
-/// Posted events only; hardware events were handled at the HID tap.
-private let sessionTapCallback: CGEventTapCallBack = { _, type, event, refcon in
-    guard let refcon, isTapControl(type) || isPosted(event) else { return Unmanaged.passUnretained(event) }
-    return Unmanaged<FenceEngine>.fromOpaque(refcon).takeUnretainedValue().handle(type: type, event: event)
-}
-
-private func isPosted(_ event: CGEvent) -> Bool {
-    event.getIntegerValueField(.eventSourceUnixProcessID) != 0
-}
-
-private func isTapControl(_ type: CGEventType) -> Bool {
-    type == .tapDisabledByTimeout || type == .tapDisabledByUserInput
 }
