@@ -91,8 +91,9 @@ public struct Decider: Sendable {
             abs(e.location.x - last.x) < 2 && abs(e.location.y - last.y) < 2 ? last : nil
         }
         // Further off than rounding means the mouse moved the cursor after all:
-        // macOS re-associates on a click (measured on the dev Mac, 2026-11-01). Treat
-        // it as associated motion, or the delta would be applied twice.
+        // the window server honors disassociation only while Cursor Fence is
+        // the active app (measured on the dev Mac, 2026-11-01). Treat it as
+        // associated motion, or the delta would be applied twice.
         let slipped = e.disassociated && !e.isSynthetic && carried == nil
         let driven = e.disassociated && !e.isSynthetic && !slipped
         let from = driven ? carried! : (lastPosition ?? e.location)

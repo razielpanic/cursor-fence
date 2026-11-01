@@ -6,6 +6,8 @@ Built for the a broadcast installation broadcast compositor, where the fullscree
 
 **Measured on the dev Mac (2026-11-01), real mouse, final build:** 0 frames with a cursor on the fenced display, and 0 times hardware motion reached it. That's 3,793 events over 20 seconds of hard flicks and slides, including single moves of several hundred points. Details and limits are under [Measured results](#measured-results).
 
+**The hard wall holds only while Cursor Fence is the active app.** macOS honors the mouse disconnect from the active app alone. With any other app in front, the local mouse stays connected and the fence falls back to pulling the pointer back after it crosses. Measured and explained under [The wall needs Cursor Fence in front](#the-wall-needs-cursor-fence-in-front-relix-2026-11-01). Remote input over Screen Sharing never used the disconnect, so the compositor is unaffected.
+
 ## How it works
 
 Every tool surveyed (CursorBridge, CursorConfine, MouseLock) moves the pointer back *after* it crosses, so a frame of cursor can reach the other display. Cursor Fence stops the mouse from moving the cursor in the first place:
@@ -93,11 +95,11 @@ How to read it:
 - **Failsafes, checked by hand:** after `kill -9` (mouse disconnected at the time), after quit, and after turning off Accessibility mid-session, the mouse moved normally each time.
 - **Release key:** the ⌥ positive control crossed freely.
 
-### Clicking breaks the wall (measured, unresolved)
+### Clicking breaks the wall (explained: clicks switched apps)
 
-The hand runs above were flicks and slides with no clicks. A run with clicks and short drags between two apps beside the wall gave a different result: `test-results/appswitch2.json`. With the mouse supposedly disconnected, 586 of 1,085 events showed the mouse moving the cursor anyway. The slips came in runs right after clicks and drags, but also during plain pushes into the wall with no click nearby. Re-asserting disconnection on every event (about 35µs each) did not stop them. Each crossing was caught and pulled back: 235 breaches, up to 57pt inside the fenced display. That is a warp-back, the thing this design set out to avoid. The capture recorded 0 leaked frames, but the rewrite-only comparison above shows it misses warp-back transients, so read that 0 as unproven.
+The hand runs above were flicks and slides with no clicks. A run with clicks and short drags between two apps beside the wall gave a different result: `test-results/appswitch2.json`. With the mouse supposedly disconnected, 586 of 1,085 events showed the mouse moving the cursor anyway. Each crossing was caught and pulled back: 235 breaches, up to 57pt inside the fenced display. The capture recorded 0 leaked frames, but the rewrite-only comparison above shows it misses warp-back transients, so read that 0 as unproven.
 
-So with the local mouse, the hard wall holds for pointing and pushing, and degrades to a fast warp-back once clicks are involved. Why macOS drops the disconnection is not yet understood.
+Those clicks made other apps active, and that is what dropped the disconnection: see [The wall needs Cursor Fence in front](#the-wall-needs-cursor-fence-in-front-relix-2026-11-01). Whether a click with Cursor Fence itself in front affects it hasn't been tested.
 
 ### Remote control
 
@@ -113,9 +115,27 @@ The broadcast show is run entirely over Screen Sharing on a headless compositor.
 
 Screen Sharing posts each click at the viewer's pointer, which can sit over Broadcast between pull-backs. Posted clicks on the fenced display are now dropped, along with their releases, unless a release key is held. RP confirmed on the compositor that clicks are blocked and that ⌥ lets them through.
 
-### Corners on the dev Mac: unexplained (2026-11-01)
+### The wall needs Cursor Fence in front (the dev Mac, 2026-11-01)
 
-With the session tap, the local mouse sometimes walks through the corner on the dev Mac: in one test, 455 breaches up to 221pt, with about 40% of corrections lost. A split build (hardware at the HID tap, posted events at the session tap) scored 0 breaches over 630 events in one test and 314 in the next, so the split didn't fix it. Something that varies over time is still unexplained. That build also seemed to stop fencing on the compositor, so it was reverted. **Drags are a known gap:** macOS ignores a warp while a button is held. Posting a corrected drag instead didn't move the cursor and broke later warps.
+The corner escapes on the dev Mac come from which app is active. macOS honors `CGAssociateMouseAndMouseCursorPosition(false)` only while Cursor Fence is the active app. With any other app in front, the local mouse stays connected to the cursor, and calling it again on every event changes nothing. The fence then works the way rewrite-only mode does: it pulls the pointer back after the mouse moves it. About half of those pull-backs are overrun by motion already on its way, and that is how the pointer walks through the corner.
+
+Measured with `scripts/corner-windows.sh`: RP pushed the real mouse into the corner without clicking while the script brought a different app to the front for each 15-second window. `scripts/trace-windows.py` scores each window. A correction counts as held when the next event finds the cursor where Cursor Fence put it.
+
+| Front app | Run 1 held | Run 2 held |
+|---|---|---|
+| Cursor Fence | 99%, 99%, 99% (5,239 of 5,292) | 99% (2,005 of 2,020) |
+| Finder | 30%, 32% | 36%, 24% |
+| Claude | 33% | 34%, 20% |
+
+The traces are `test-results/corner-20261101-143557.csv` and `corner-20261101-144755.csv`. Run 2 was a build that also set the window server's `SetsCursorInBackground` connection property, which governs the cursor image; it made no difference and was dropped. The slipped events carry motion in points, as connected motion does, where disconnected motion arrives in pixels. In the background windows, most of the corrections that "held" were the cursor pinned at the screen's top edge.
+
+This accounts for the earlier mixed results. Re-scored by front app, the older app-switch traces show the mouse connected under FenceHarness, System Settings and Claude alike. `scripts/build-app.sh --install` relaunches the app, which puts it in front, so a test run right after an install sees the hard wall until something else is clicked. That probably explains the split build's 0-breach run and its 314-breach run that followed, but those runs left no trace, so it isn't confirmed. AppKit points the same way: it carries machinery for a remote view to have its host app disconnect the mouse on its behalf.
+
+Consequences:
+
+- **The compositor is unaffected.** Its input is Screen Sharing's posted events, which the disconnect never covered.
+- **On a Mac with a local mouse**, the wall is hard only while Cursor Fence is in front. The rest of the time it is a fast pull-back. No fix is known that keeps another app in front: making Cursor Fence active near the wall would take keyboard focus from the user.
+- **Drags are a separate known gap:** macOS ignores a warp while a button is held. Posting a corrected drag instead didn't move the cursor and broke later warps.
 
 ## Deploying to the compositor
 

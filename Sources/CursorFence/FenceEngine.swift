@@ -33,8 +33,9 @@ final class EngineStats: Sendable {
     /// in hundredths of a point (0 when breaches stayed in the clearance strip).
     let maxBreachDepth = Atomic<Int>(0)
     /// Hardware events, while disassociated, whose location was not where we
-    /// last put the cursor: the mouse moved it anyway (macOS re-associates on
-    /// a click), or another process warped it.
+    /// last put the cursor: the mouse moved it anyway (the window server
+    /// honors disassociation only while Cursor Fence is the active app), or
+    /// another process warped it.
     let slips = Atomic<Int>(0)
     let drivenEvents = Atomic<Int>(0)
     let lastSyntheticPID = Atomic<Int>(0)
@@ -262,8 +263,11 @@ final class FenceEngine: @unchecked Sendable {
                 CGAssociateMouseAndMouseCursorPosition(want ? 0 : 1)
                 dis = want
             } else if want {
-                // macOS re-associates the mouse on a click, behind our back.
-                // Re-assert on every engaged event (about 35µs each).
+                // The window server drops disassociation when another app
+                // becomes active. Re-asserting (about 35µs per engaged event)
+                // does not bring it back while that app stays in front
+                // (scripts/corner-windows.sh, the dev Mac, 2026-11-01); it is kept
+                // for the moment Cursor Fence is active again.
                 CGAssociateMouseAndMouseCursorPosition(0)
             }
         }
