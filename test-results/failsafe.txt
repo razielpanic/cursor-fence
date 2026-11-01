@@ -1,0 +1,2 @@
+kill -9: disassociated before kill = yes; guardian alive after = no
+quit: disassociated before quit = no

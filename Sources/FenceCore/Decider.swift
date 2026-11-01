@@ -83,9 +83,16 @@ public struct Decider: Sendable {
         // Disassociated hardware motion leaves the cursor where it was and
         // reports only deltas; everything else reports where the cursor went.
         let driven = e.disassociated && !e.isSynthetic
-        let from = driven ? e.location : (lastPosition ?? e.location)
+        // A warp floors the cursor to whole points, so a driven event reports
+        // our last position rounded down. Carry the fraction ourselves, or
+        // slow sub-point motion near the wall is lost. A location further off
+        // than rounding means another process moved the cursor: follow it.
+        let carried = lastPosition.flatMap { last in
+            abs(e.location.x - last.x) < 2 && abs(e.location.y - last.y) < 2 ? last : nil
+        }
+        let from = driven ? (carried ?? e.location) : (lastPosition ?? e.location)
         let target = driven
-            ? CGPoint(x: e.location.x + e.delta.dx, y: e.location.y + e.delta.dy)
+            ? CGPoint(x: from.x + e.delta.dx / g.scale(at: from), y: from.y + e.delta.dy / g.scale(at: from))
             : e.location
 
         // Inside the fenced display (crossed with a release key, or it was
@@ -101,7 +108,7 @@ public struct Decider: Sendable {
         let breach = !driven && !e.isSynthetic && g.isInZone(e.location) && !g.isInZone(from)
         // A rewritten synthetic event lands where it says; hardware motion has
         // already put the cursor at the event's location (or left it there).
-        let cursorWithoutWarp = e.isSynthetic ? pos : e.location
+        let cursorWithoutWarp = e.isSynthetic ? pos : (driven ? from : e.location)
         let speed = (e.delta.dx * e.delta.dx + e.delta.dy * e.delta.dy).squareRoot()
         let reach = max(band, speed * bandVelocityFactor)
         let want = mechanism == .disassociate && !g.isInFenced(pos) && g.distanceToZone(pos) < reach

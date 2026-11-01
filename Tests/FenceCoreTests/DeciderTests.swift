@@ -149,3 +149,51 @@ let capsLockFlag: UInt64 = 0x0001_0000
         #expect(half > 6)  // ease-out: more than half the way at half the time
     }
 }
+
+@Suite struct DrivenPrecisionTests {
+    @Test func subPointMotionAccumulatesDespiteFlooredWarps() {
+        var d = Decider(geometry: fenceMSI, releaseKeys: .defaultKeys, mechanism: .disassociate, band: 200)
+        d.reset(at: CGPoint(x: 100, y: 100))
+        // Slow trackpad drift: 0.4pt per event; the cursor reports whole points.
+        for _ in 0..<10 {
+            let at = d.lastPosition!
+            let floored = CGPoint(x: at.x.rounded(.down), y: at.y.rounded(.down))
+            _ = d.handle(MotionInput(location: floored, delta: CGVector(dx: 0, dy: 0.4),
+                                     isSynthetic: false, flags: 0, disassociated: true))
+        }
+        #expect(abs(d.lastPosition!.y - 104) < 0.001)
+    }
+
+    @Test func externalWarpIsFollowed() {
+        var d = Decider(geometry: fenceMSI, releaseKeys: .defaultKeys, mechanism: .disassociate, band: 200)
+        d.reset(at: CGPoint(x: 100, y: 100))
+        let out = d.handle(MotionInput(location: CGPoint(x: 300, y: 500), delta: CGVector(dx: 5, dy: 0),
+                                       isSynthetic: false, flags: 0, disassociated: true))
+        #expect(out.position == CGPoint(x: 305, y: 500))
+    }
+
+    @Test func standardExtentIsWholePoints() {
+        let e = CursorExtent.standard(cursorScale: 1.3)
+        #expect(e.left == 26 && e.up == 26 && e.right == 52 && e.down == 52)
+    }
+}
+
+@Suite struct DeltaScaleTests {
+    @Test func drivenDeltasAreConvertedFromPixelsToPoints() {
+        let g = FenceGeometry(fenced: msi, others: [builtIn], extent: ext, otherScales: [2])
+        var d = Decider(geometry: g, releaseKeys: .defaultKeys, mechanism: .disassociate, band: 200)
+        d.reset(at: CGPoint(x: 300, y: 500))
+        let out = d.handle(MotionInput(location: CGPoint(x: 300, y: 500), delta: CGVector(dx: -10, dy: 6),
+                                       isSynthetic: false, flags: 0, disassociated: true))
+        #expect(out.position == CGPoint(x: 295, y: 503))
+    }
+
+    @Test func associatedMotionIsNotScaled() {
+        let g = FenceGeometry(fenced: msi, others: [builtIn], extent: ext, otherScales: [2])
+        var d = Decider(geometry: g, releaseKeys: .defaultKeys, mechanism: .disassociate, band: 200)
+        d.reset(at: CGPoint(x: 900, y: 500))
+        let out = d.handle(MotionInput(location: CGPoint(x: 890, y: 500), delta: CGVector(dx: -10, dy: 0),
+                                       isSynthetic: false, flags: 0, disassociated: false))
+        #expect(out.position == CGPoint(x: 890, y: 500))
+    }
+}

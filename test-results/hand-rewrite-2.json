@@ -1,0 +1,40 @@
+{
+  "app.breaches" : 16,
+  "app.closestEngagePt" : -1,
+  "app.engagements" : 0,
+  "app.glowRefused" : 0,
+  "app.glowShown" : 16,
+  "app.hardwareEvents" : 3052,
+  "app.maxBreachDepthPt" : 25,
+  "app.maxHardwareDeltaPt" : 195,
+  "app.rebounds" : 16,
+  "app.syntheticEvents" : 0,
+  "app.tapRestarts" : 0,
+  "app.watchdogTrips" : 0,
+  "drive" : "manual",
+  "eventsPosted" : 0,
+  "fencedDisplay" : "C2183EAF-C0F8-48AE-A739-E151798D6E4B (-4096.0, -1429.0, 4096.0, 1728.0)",
+  "framesCaptured" : 52,
+  "heldFlags" : 0,
+  "leakedFrames" : 0,
+  "leakTimes" : [
+
+  ],
+  "maxBrightPixels" : 0,
+  "mechanism" : "rewriteOnly",
+  "seconds" : 15,
+  "windows.glowFrames" : [
+    "0,0 90×101",
+    "0,0 90×123",
+    "0,0 90×128",
+    "0,0 90×145",
+    "0,0 90×157",
+    "0,0 90×174",
+    "0,0 90×175",
+    "0,0 90×90",
+    "0,0 90×94",
+    "0,150 90×180"
+  ],
+  "windows.glowSamples" : 1169,
+  "windows.onFencedDisplay" : 0
+}

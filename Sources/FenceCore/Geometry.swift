@@ -24,8 +24,11 @@ public struct CursorExtent: Sendable, Equatable {
     /// Hotspots sit at the top-left (arrow) or centre (resize, crosshair),
     /// so images reach further right/down than left/up.
     public static func standard(cursorScale: CGFloat) -> CursorExtent {
+        // Whole points: the cursor sits on whole-point positions (a warp
+        // floors), so whole-point zone faces can't be crossed by rounding.
         let s = max(1, cursorScale)
-        return CursorExtent(left: 20 * s, up: 20 * s, right: 40 * s, down: 40 * s)
+        return CursorExtent(left: (20 * s).rounded(.up), up: (20 * s).rounded(.up),
+                            right: (40 * s).rounded(.up), down: (40 * s).rounded(.up))
     }
 
     public static let zero = CursorExtent(left: 0, up: 0, right: 0, down: 0)
@@ -60,11 +63,24 @@ public struct FenceGeometry: Sendable, Equatable {
     /// Bounds of every other active display. The pointer may go anywhere in these.
     public var others: [CGRect]
     public var extent: CursorExtent
+    /// Backing scale (pixels per point) of each display in `others`.
+    /// Disassociated, the mouse reports its motion in pixels of the display
+    /// under the cursor, not in points: on a 2x Retina panel, driving the
+    /// cursor by the raw deltas doubled every move (RP, the dev Mac, 2026-11-01).
+    public var otherScales: [CGFloat]
 
-    public init(fenced: CGRect, others: [CGRect], extent: CursorExtent) {
+    public init(fenced: CGRect, others: [CGRect], extent: CursorExtent, otherScales: [CGFloat]? = nil) {
         self.fenced = fenced
         self.others = others
         self.extent = extent
+        self.otherScales = otherScales ?? others.map { _ in 1 }
+    }
+
+    /// Pixels per point of the display containing `p`; 1 if none does.
+    public func scale(at p: CGPoint) -> CGFloat {
+        guard let i = others.firstIndex(where: { p.x >= $0.minX && p.x < $0.maxX && p.y >= $0.minY && p.y < $0.maxY }),
+              i < otherScales.count, otherScales[i] > 0 else { return 1 }
+        return otherScales[i]
     }
 
     /// Hotspot positions at which the cursor image would overlap the fenced

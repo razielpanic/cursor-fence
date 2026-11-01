@@ -58,9 +58,17 @@ enum Displays {
     static func geometry(fencing uuid: String?) -> FenceGeometry? {
         let all = active()
         guard let uuid, let fenced = all.first(where: { $0.id == uuid }) else { return nil }
-        let others = all.filter { $0.id != uuid }.map(\.bounds)
-        guard !others.isEmpty else { return nil }
-        return FenceGeometry(fenced: fenced.bounds, others: others, extent: .standard(cursorScale: cursorScale()))
+        let rest = all.filter { $0.id != uuid }
+        guard !rest.isEmpty else { return nil }
+        return FenceGeometry(fenced: fenced.bounds, others: rest.map(\.bounds),
+                             extent: .standard(cursorScale: cursorScale()),
+                             otherScales: rest.map { backingScale($0.displayID) })
+    }
+
+    /// Pixels per point of a display's current mode (2 on a Retina panel).
+    static func backingScale(_ id: CGDirectDisplayID) -> CGFloat {
+        guard let mode = CGDisplayCopyDisplayMode(id), mode.width > 0 else { return 1 }
+        return CGFloat(mode.pixelWidth) / CGFloat(mode.width)
     }
 
     static var mainDisplayHeight: CGFloat { CGDisplayBounds(CGMainDisplayID()).height }

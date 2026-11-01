@@ -3,4 +3,6 @@ build/
 *.xcodeproj/
 .swiftpm/
 DerivedData/
-test-results/frames/
+test-results/**/frames/
+test-results/*.csv
+test-results/*.log

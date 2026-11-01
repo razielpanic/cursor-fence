@@ -52,6 +52,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model.setTapRunning(false)
         }
         model.writeStats()
+        let request = AppModel.statsURL.deletingLastPathComponent().appendingPathComponent("dump-trace")
+        if FileManager.default.fileExists(atPath: request.path) {
+            try? FileManager.default.removeItem(at: request)
+            model.engine.dumpTrace(to: request.deletingLastPathComponent().appendingPathComponent("trace.csv"))
+        }
     }
 
     private func startTapIfPossible() {
@@ -78,6 +83,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.scheduleReconfigure() }
             }
+        }
+        ws.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
+            let app = (n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.localizedName ?? "?"
+            MainActor.assumeIsolated { self?.model.engine.mark("activate \(app)") }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in

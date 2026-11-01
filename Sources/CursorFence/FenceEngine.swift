@@ -29,6 +29,19 @@ final class EngineStats: Sendable {
     /// disassociated, in hundredths of a point. If this nears zero, the band
     /// is too thin for the motion it is getting. Int.max until first engage.
     let closestEngage = Atomic<Int>(.max)
+    /// Deepest a breach carried the hotspot into the fenced display itself,
+    /// in hundredths of a point (0 when breaches stayed in the clearance strip).
+    let maxBreachDepth = Atomic<Int>(0)
+    /// Hardware events, while disassociated, whose location was not where we
+    /// last put the cursor: the mouse moved it anyway. Should stay 0; another
+    /// process warping the cursor also counts.
+    let slips = Atomic<Int>(0)
+    let drivenEvents = Atomic<Int>(0)
+    /// Slips whose location was where the cursor had been one step earlier:
+    /// the event left the HID system before our last warp landed.
+    let staleSlips = Atomic<Int>(0)
+    /// Largest slip, in hundredths of a point.
+    let maxSlip = Atomic<Int>(0)
 
     func snapshot() -> [String: Int] {
         [
@@ -40,6 +53,11 @@ final class EngineStats: Sendable {
             "watchdogTrips": watchdogTrips.load(ordering: .relaxed),
             "engagements": engagements.load(ordering: .relaxed),
             "maxHardwareDeltaPt": maxHardwareDelta.load(ordering: .relaxed) / 100,
+            "slips": slips.load(ordering: .relaxed),
+            "drivenEvents": drivenEvents.load(ordering: .relaxed),
+            "staleSlips": staleSlips.load(ordering: .relaxed),
+            "maxSlipPt": maxSlip.load(ordering: .relaxed) / 100,
+            "maxBreachDepthPt": maxBreachDepth.load(ordering: .relaxed) / 100,
             "closestEngagePt": closestEngage.load(ordering: .relaxed) == .max
                 ? -1 : closestEngage.load(ordering: .relaxed) / 100,
         ]
@@ -79,6 +97,52 @@ final class FenceEngine: @unchecked Sendable {
     private var recoilApplied: CGFloat = 0
     private var recoilActive = false
     private var lastFeedbackNanos: UInt64 = 0
+    private var previousPosition = CGPoint(x: CGFloat.nan, y: .nan)
+
+    // Diagnostic trace: a preallocated ring of recent events, dumped on request.
+    struct TraceEntry {
+        var nanos: UInt64 = 0
+        var type: Int32 = 0
+        var disassociated: Int32 = 0
+        var location = CGPoint.zero
+        var delta = CGVector.zero
+        var position = CGPoint.zero
+    }
+    static let traceCapacity = 16384
+    private let trace = UnsafeMutablePointer<TraceEntry>.allocate(capacity: FenceEngine.traceCapacity)
+    private let traceCount = Atomic<Int>(0)
+    /// Marks from other threads (app activations), for the same dump.
+    let marks = Mutex<[(UInt64, String)]>([])
+
+    private func record(_ type: CGEventType, _ event: CGEvent, dis: Bool, delta: CGVector, position: CGPoint) {
+        let n = traceCount.load(ordering: .relaxed)
+        trace[n % Self.traceCapacity] = TraceEntry(nanos: DispatchTime.now().uptimeNanoseconds, type: Int32(type.rawValue),
+                                                   disassociated: dis ? 1 : 0, location: event.location,
+                                                   delta: delta, position: position)
+        traceCount.store(n + 1, ordering: .releasing)
+    }
+
+    func mark(_ what: String) {
+        let t = DispatchTime.now().uptimeNanoseconds
+        marks.withLock { $0.append((t, what)); if $0.count > 500 { $0.removeFirst(100) } }
+    }
+
+    /// CSV of the trace and marks, oldest first.
+    func dumpTrace(to url: URL) {
+        let n = traceCount.load(ordering: .acquiring)
+        let start = max(0, n - Self.traceCapacity)
+        var lines = ["t_ms,type,dis,loc_x,loc_y,dx,dy,pos_x,pos_y,mark"]
+        var rows: [(UInt64, String)] = []
+        for i in start..<n {
+            let e = trace[i % Self.traceCapacity]
+            rows.append((e.nanos, "\(e.type),\(e.disassociated),\(e.location.x),\(e.location.y),\(e.delta.dx),\(e.delta.dy),\(e.position.x),\(e.position.y),"))
+        }
+        rows += marks.withLock { $0 }.map { ($0.0, ",,,,,,,,\($0.1)") }
+        rows.sort { $0.0 < $1.0 }
+        let t0 = rows.first?.0 ?? 0
+        lines += rows.map { "\(Double($0.0 &- t0) / 1e6),\($0.1)" }
+        try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+    }
 
     static let recoilDistance: CGFloat = 14
     static let recoilDuration: Double = 0.14
@@ -108,7 +172,8 @@ final class FenceEngine: @unchecked Sendable {
         guard tap == nil else { return true }
 
         let mask: CGEventMask = [CGEventType.mouseMoved, .leftMouseDragged, .rightMouseDragged,
-                                 .otherMouseDragged, .flagsChanged]
+                                 .otherMouseDragged, .flagsChanged, .leftMouseDown, .leftMouseUp,
+                                 .rightMouseDown, .rightMouseUp]
             .reduce(0) { $0 | (1 << $1.rawValue) }
         guard let port = CGEvent.tapCreate(tap: .cghidEventTap, place: .headInsertEventTap,
                                            options: .defaultTap, eventsOfInterest: mask,
@@ -118,6 +183,7 @@ final class FenceEngine: @unchecked Sendable {
             return false
         }
         tap = port
+        Self.zeroSuppressionInterval()
         lastTapEventNanos.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
 
         let ready = DispatchSemaphore(value: 0)
@@ -202,6 +268,25 @@ final class FenceEngine: @unchecked Sendable {
         }
     }
 
+    // MARK: Moving the cursor
+
+    /// Measured on the dev Mac (2026-11-01): after each warp, macOS ignores
+    /// hardware motion for 250ms. While the mouse is disassociated that is
+    /// invisible, but at hand-back the pointer froze for 250ms at the band
+    /// edge. Zeroing the interval cut that to 4ms. Rewriting a driven event's
+    /// location does not move the cursor (88 of 1682 followed), and posting a
+    /// zero-suppression event instead of warping left ~8ms freezes.
+    static func zeroSuppressionInterval() {
+        // Deprecated and hidden from Swift; still exported by CoreGraphics.
+        typealias Fn = @convention(c) (Double) -> Int32
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSetLocalEventsSuppressionInterval") else {
+            log.error("CGSetLocalEventsSuppressionInterval not found")
+            return
+        }
+        let rc = unsafeBitCast(sym, to: Fn.self)(0)
+        log.notice("CGSetLocalEventsSuppressionInterval(0) = \(rc)")
+    }
+
     // MARK: Tap
 
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -212,7 +297,6 @@ final class FenceEngine: @unchecked Sendable {
             // Let go first, then come back.
             associate(reason: "tap disabled")
             stats.tapRestarts.add(1, ordering: .relaxed)
-            decider.reset(at: nil)
             if let port = tap { CGEvent.tapEnable(tap: port, enable: true) }
             return Unmanaged.passUnretained(event)
 
@@ -226,6 +310,10 @@ final class FenceEngine: @unchecked Sendable {
 
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
             break
+
+        case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp:
+            record(type, event, dis: isDisassociated, delta: .zero, position: event.location)
+            return Unmanaged.passUnretained(event)
 
         default:
             return Unmanaged.passUnretained(event)
@@ -252,14 +340,35 @@ final class FenceEngine: @unchecked Sendable {
             }
         }
 
+        if wasDisassociated, !synthetic, let last = decider.lastPosition {
+            stats.drivenEvents.add(1, ordering: .relaxed)
+            // Compare against where the warp actually put the cursor: floored.
+            let l = event.location
+            let last = CGPoint(x: last.x.rounded(.down), y: last.y.rounded(.down))
+            if abs(l.x - last.x) > 0.5 || abs(l.y - last.y) > 0.5 {
+                stats.slips.add(1, ordering: .relaxed)
+                let m = Int(max(abs(l.x - last.x), abs(l.y - last.y)) * 100)
+                if m > stats.maxSlip.load(ordering: .relaxed) { stats.maxSlip.store(m, ordering: .relaxed) }
+                if abs(l.x - previousPosition.x.rounded(.down)) <= 0.5, abs(l.y - previousPosition.y.rounded(.down)) <= 0.5 {
+                    stats.staleSlips.add(1, ordering: .relaxed)
+                }
+            }
+        }
+        if let last = decider.lastPosition { previousPosition = last }
         let out = decider.handle(MotionInput(location: event.location, delta: CGVector(dx: dx, dy: dy),
                                              isSynthetic: synthetic, flags: event.flags.rawValue,
                                              disassociated: wasDisassociated))
         if out.released { recoilActive = false }
         if out.breach {
             stats.breaches.add(1, ordering: .relaxed)
+            if let g = decider.geometry, g.isInFenced(event.location) {
+                let f = g.fenced, l = event.location
+                let depth = Int(min(l.x - f.minX, f.maxX - l.x, l.y - f.minY, f.maxY - l.y) * 100)
+                if depth > stats.maxBreachDepth.load(ordering: .relaxed) { stats.maxBreachDepth.store(depth, ordering: .relaxed) }
+            }
             log.error("breach: hardware motion reached the zone while associated")
         }
+        record(type, event, dis: wasDisassociated, delta: CGVector(dx: dx, dy: dy), position: out.position)
         if out.warp { CGWarpMouseCursorPosition(out.position) }
         if out.rewrite { event.location = out.position }
 
@@ -283,7 +392,7 @@ final class FenceEngine: @unchecked Sendable {
         decider.releaseKeys = c.releaseKeys
         decider.mechanism = c.mechanism
         decider.band = c.band
-        decider.reset(at: nil)
+        // lastPosition stays: it is in global coordinates and still true.
         recoilActive = false
     }
 

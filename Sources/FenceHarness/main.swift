@@ -239,6 +239,9 @@ final class Recorder: NSObject, SCStreamOutput, @unchecked Sendable {
 
 // MARK: Glow placement sampler
 
+let fencePID: pid_t = NSRunningApplication.runningApplications(withBundleIdentifier: "com.razielpanic.CursorFence")
+    .first?.processIdentifier ?? -1
+
 /// Polls the window list for Cursor Fence's windows: counts glow sightings on
 /// the work screen and any window at all that overlaps the fenced display.
 final class WindowSampler: @unchecked Sendable {
@@ -253,7 +256,7 @@ final class WindowSampler: @unchecked Sendable {
         t.schedule(deadline: .now(), repeating: 1.0 / 120)
         t.setEventHandler { [self] in
             guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return }
-            for w in list where (w[kCGWindowOwnerName as String] as? String) == "CursorFence" {
+            for w in list where (w[kCGWindowOwnerPID as String] as? pid_t) == fencePID {
                 guard let b = w[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
                 let r = CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
                 if overlapArea(r, F) > 0 { violations.add(1, ordering: .relaxed) }
@@ -339,6 +342,11 @@ func runLeak() async throws {
         "app.engagements": delta("engagements"),
         "app.maxHardwareDeltaPt": int(after, "maxHardwareDeltaPt"),
         "app.closestEngagePt": int(after, "closestEngagePt"),
+        "app.maxBreachDepthPt": int(after, "maxBreachDepthPt"),
+        "app.drivenEvents": delta("drivenEvents"),
+        "app.slips": delta("slips"),
+        "app.staleSlips": delta("staleSlips"),
+        "app.maxSlipPt": int(after, "maxSlipPt"),
         "app.watchdogTrips": delta("watchdogTrips"),
         "app.tapRestarts": delta("tapRestarts"),
         "windows.glowSamples": sampler.glowSamples.load(ordering: .relaxed),
@@ -362,11 +370,12 @@ func runFeedback() async throws {
         driver.move(to: at(a, 200), flags: 0)
         try await Task.sleep(for: .milliseconds(50))
         driver.move(to: at(a, -300), flags: 0)
-        let atWall = cursorLocation()
         try await Task.sleep(for: .milliseconds(300))
         let settled = cursorLocation()
-        // Distance moved away from the fenced display after the contact.
-        recoils.append(Double((settled.x - atWall.x) * seam.normal.dx + (settled.y - atWall.y) * seam.normal.dy))
+        // How far the pointer settled from the wall (the zone face it hit).
+        let z = (appStats()["zone"] as? [CGFloat]).map { CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) } ?? F
+        let face = seam.normal.dx > 0 ? z.maxX : seam.normal.dx < 0 ? z.minX : seam.normal.dy > 0 ? z.maxY : z.minY
+        recoils.append(Double(seam.normal.dx != 0 ? (settled.x - face) * seam.normal.dx : (settled.y - face) * seam.normal.dy))
         try await Task.sleep(for: .milliseconds(400))
     }
     sampler.stop()
