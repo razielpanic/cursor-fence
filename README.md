@@ -112,3 +112,14 @@ The broadcast show is run entirely over Screen Sharing on a headless compositor.
 ## Deploying to the compositor
 
 Copy `CursorFence.app` to `/Applications`, launch it, grant Accessibility, choose the broadcast display, switch on Settings › Startup › Open at login (approve it in System Settings › General › Login Items if asked), and confirm the rebound against the shared edge.
+
+### Compositor results so far (2026-11-01, macOS 26.6.2, off-air)
+
+Run over SSH with `open -W build/FenceHarness.app --args leak … --json PATH` (FenceHarness.app holds Screen Recording, so sshd doesn't need it). Broadcast is fenced, directly left of Main.
+
+| Run | Leaked frames | Notes |
+|---|---|---|
+| Synthetic stress, fenced | 70 of 470 | Every leak is the cursor image straddling the seam: 2–6 px at Broadcast's right edge, the hotspot was on Main. The app saw 2,933 of 11,881 posted moves (session-level coalescing); 12 rebounds, glows on Main only, 0 windows on Broadcast. |
+| ⌥ control | 0 of 255 | **Unexplained.** The control should show a cursor on Broadcast, and the app counted 0 events during it, though the engine counts synthetic moves before checking release keys. Until this is explained the control doesn't validate the detector on this Mac. |
+
+Screen Sharing input arrives from ScreensharingAgent at the session level. Still to run: RP flicking over Screen Sharing with the viewer showing all displays, then only Main.

@@ -14,6 +14,9 @@
 // Usage:
 //   FenceHarness leak --drive synthetic|manual [--seconds N] [--hold option] [--out DIR]
 //   FenceHarness feedback [--pushes N]
+//   Any command also takes --json PATH. scripts/build-harness.sh wraps the
+//   harness in FenceHarness.app, so Screen Recording can be granted to it
+//   alone when it is launched with `open` (e.g. over SSH).
 
 import AppKit
 import CoreMedia
@@ -71,6 +74,7 @@ func cursorLocation() -> CGPoint { CGEvent(source: nil)?.location ?? .zero }
 
 func fail(_ msg: String) -> Never {
     FileHandle.standardError.write(Data("FenceHarness: \(msg)\n".utf8))
+    if let path = opt("--json") { try? Data("{\"error\": \"\(msg)\"}".utf8).write(to: URL(fileURLWithPath: path)) }
     exit(2)
 }
 
@@ -289,9 +293,12 @@ func coverFencedDisplay() -> NSWindow {
     return w
 }
 
+/// Prints the result, and also writes it to `--json PATH` (needed when the
+/// harness runs as an app via `open`, where stdout goes nowhere).
 func printJSON(_ obj: [String: Any]) {
     let d = try! JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
     print(String(decoding: d, as: UTF8.self))
+    if let path = opt("--json") { try? d.write(to: URL(fileURLWithPath: path)) }
 }
 
 @MainActor
