@@ -167,6 +167,8 @@ Both Macs run Cursor Fence from `/Applications`. On the dev Mac, `scripts/build-
 
 Run over SSH with `open -W build/FenceHarness.app --args leak … --json PATH` (FenceHarness.app holds Screen Recording, so sshd doesn't need it). Broadcast is fenced, directly left of Main.
 
+**v1 verified on the compositor (no regression).** The background fix is inert there, as expected: a head-to-head synthetic stress run, v1 against the prior build under identical conditions, leaked 568 of 925 frames versus 574 of 923 — the same within noise. (Both are high because a live Screen Sharing viewer was posting its cursor onto Broadcast during the run; the point is the two builds match.) The compositor's own counters showed 0 breaches and 0 slips in both. The compositor cannot sign (no identity in its keychain; it runs a the dev Mac-signed bundle), so a v1 deploy there means copying the signed bundle over, which the existing Accessibility grant honored (same identity and bundle id). Left on its proven build, since v1 changes only the local-mouse path the compositor never uses.
+
 | Run | Leaked frames | Notes |
 |---|---|---|
 | Synthetic stress, fenced | 70 of 470 | Every leak is the cursor image straddling the seam: 2–6 px at Broadcast's right edge, the hotspot was on Main. The app saw 2,933 of 11,881 posted moves (session-level coalescing); 12 rebounds, glows on Main only, 0 windows on Broadcast. |
