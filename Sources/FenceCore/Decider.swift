@@ -48,6 +48,8 @@ public struct MotionOutput: Sendable, Equatable {
     /// image may already have been drawn on the fenced display.
     public var breach: Bool
     public var released: Bool
+    /// The mouse was meant to be disassociated, but moved the cursor anyway.
+    public var slipped: Bool
 }
 
 /// The fence's per-event decision, kept free of side effects so it can be
@@ -77,20 +79,23 @@ public struct Decider: Sendable {
         guard let g = geometry, !released else {
             lastPosition = e.location
             return MotionOutput(position: e.location, rewrite: false, warp: false,
-                                wantDisassociated: false, contact: nil, breach: false, released: released)
+                                wantDisassociated: false, contact: nil, breach: false, released: released,
+                                slipped: false)
         }
 
-        // Disassociated hardware motion leaves the cursor where it was and
-        // reports only deltas; everything else reports where the cursor went.
-        let driven = e.disassociated && !e.isSynthetic
-        // A warp floors the cursor to whole points, so a driven event reports
-        // our last position rounded down. Carry the fraction ourselves, or
-        // slow sub-point motion near the wall is lost. A location further off
-        // than rounding means another process moved the cursor: follow it.
+        // Disassociated hardware motion leaves the cursor where we put it and
+        // reports only deltas. A warp floors the cursor to whole points, so the
+        // event reports our last position rounded down: carry the fraction
+        // ourselves, or slow sub-point motion near the wall is lost.
         let carried = lastPosition.flatMap { last in
             abs(e.location.x - last.x) < 2 && abs(e.location.y - last.y) < 2 ? last : nil
         }
-        let from = driven ? (carried ?? e.location) : (lastPosition ?? e.location)
+        // Further off than rounding means the mouse moved the cursor after all:
+        // macOS re-associates on a click (measured on the dev Mac, 2026-11-01). Treat
+        // it as associated motion, or the delta would be applied twice.
+        let slipped = e.disassociated && !e.isSynthetic && carried == nil
+        let driven = e.disassociated && !e.isSynthetic && !slipped
+        let from = driven ? carried! : (lastPosition ?? e.location)
         let target = driven
             ? CGPoint(x: from.x + e.delta.dx / g.scale(at: from), y: from.y + e.delta.dy / g.scale(at: from))
             : e.location
@@ -100,7 +105,8 @@ public struct Decider: Sendable {
         if g.isInFenced(from) {
             lastPosition = target
             return MotionOutput(position: target, rewrite: false, warp: driven,
-                                wantDisassociated: false, contact: nil, breach: false, released: false)
+                                wantDisassociated: false, contact: nil, breach: false, released: false,
+                                slipped: slipped)
         }
 
         let step = g.step(from: from, to: target)
@@ -116,6 +122,6 @@ public struct Decider: Sendable {
         lastPosition = pos
         return MotionOutput(position: pos, rewrite: pos != e.location,
                             warp: cursorWithoutWarp != pos, wantDisassociated: want,
-                            contact: step.contact, breach: breach, released: false)
+                            contact: step.contact, breach: breach, released: false, slipped: slipped)
     }
 }

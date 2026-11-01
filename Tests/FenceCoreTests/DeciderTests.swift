@@ -164,12 +164,12 @@ let capsLockFlag: UInt64 = 0x0001_0000
         #expect(abs(d.lastPosition!.y - 104) < 0.001)
     }
 
-    @Test func externalWarpIsFollowed() {
+    @Test func externalWarpIsFollowedWithoutAddingMotion() {
         var d = Decider(geometry: fenceMSI, releaseKeys: .defaultKeys, mechanism: .disassociate, band: 200)
         d.reset(at: CGPoint(x: 100, y: 100))
         let out = d.handle(MotionInput(location: CGPoint(x: 300, y: 500), delta: CGVector(dx: 5, dy: 0),
                                        isSynthetic: false, flags: 0, disassociated: true))
-        #expect(out.position == CGPoint(x: 305, y: 500))
+        #expect(out.position == CGPoint(x: 300, y: 500))
     }
 
     @Test func standardExtentIsWholePoints() {
@@ -195,5 +195,27 @@ let capsLockFlag: UInt64 = 0x0001_0000
         let out = d.handle(MotionInput(location: CGPoint(x: 890, y: 500), delta: CGVector(dx: -10, dy: 0),
                                        isSynthetic: false, flags: 0, disassociated: false))
         #expect(out.position == CGPoint(x: 890, y: 500))
+    }
+}
+
+@Suite struct SlipTests {
+    @Test func reassociatedMotionIsNotAppliedTwice() {
+        var d = Decider(geometry: fenceMSI, releaseKeys: .defaultKeys, mechanism: .disassociate, band: 200)
+        d.reset(at: CGPoint(x: 300, y: 500))
+        // A click re-associated the mouse: the cursor already moved 30pt left.
+        let out = d.handle(MotionInput(location: CGPoint(x: 270, y: 500), delta: CGVector(dx: -60, dy: 0),
+                                       isSynthetic: false, flags: 0, disassociated: true))
+        #expect(out.slipped)
+        #expect(out.position == CGPoint(x: 270, y: 500))
+        #expect(!out.warp)
+    }
+
+    @Test func slipIntoTheZoneIsABreachAndPulledBack() {
+        var d = Decider(geometry: fenceMSI, releaseKeys: .defaultKeys, mechanism: .disassociate, band: 200)
+        d.reset(at: CGPoint(x: 40, y: 100))
+        let out = d.handle(MotionInput(location: CGPoint(x: -30, y: 100), delta: CGVector(dx: -140, dy: 0),
+                                       isSynthetic: false, flags: 0, disassociated: true))
+        #expect(out.slipped && out.breach && out.warp)
+        #expect(out.position == CGPoint(x: 20, y: 100))
     }
 }

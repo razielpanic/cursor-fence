@@ -33,13 +33,11 @@ final class EngineStats: Sendable {
     /// in hundredths of a point (0 when breaches stayed in the clearance strip).
     let maxBreachDepth = Atomic<Int>(0)
     /// Hardware events, while disassociated, whose location was not where we
-    /// last put the cursor: the mouse moved it anyway. Should stay 0; another
-    /// process warping the cursor also counts.
+    /// last put the cursor: the mouse moved it anyway (macOS re-associates on
+    /// a click), or another process warped it.
     let slips = Atomic<Int>(0)
     let drivenEvents = Atomic<Int>(0)
-    /// Slips whose location was where the cursor had been one step earlier:
-    /// the event left the HID system before our last warp landed.
-    let staleSlips = Atomic<Int>(0)
+    let lastSyntheticPID = Atomic<Int>(0)
     /// Largest slip, in hundredths of a point.
     let maxSlip = Atomic<Int>(0)
 
@@ -55,7 +53,6 @@ final class EngineStats: Sendable {
             "maxHardwareDeltaPt": maxHardwareDelta.load(ordering: .relaxed) / 100,
             "slips": slips.load(ordering: .relaxed),
             "drivenEvents": drivenEvents.load(ordering: .relaxed),
-            "staleSlips": staleSlips.load(ordering: .relaxed),
             "maxSlipPt": maxSlip.load(ordering: .relaxed) / 100,
             "maxBreachDepthPt": maxBreachDepth.load(ordering: .relaxed) / 100,
             "closestEngagePt": closestEngage.load(ordering: .relaxed) == .max
@@ -80,7 +77,6 @@ final class FenceEngine: @unchecked Sendable {
     private let pendingConfig: Mutex<EngineConfig>
     private let configGeneration = Atomic<UInt64>(1)
     private let disassociated = Mutex<Bool>(false)
-    private let lastAssertNanos = Atomic<UInt64>(0)
     private let lastTapEventNanos = Atomic<UInt64>(0)
     private let suspended = Atomic<Bool>(false)
     private let lifecycle = NSLock()
@@ -97,7 +93,6 @@ final class FenceEngine: @unchecked Sendable {
     private var recoilApplied: CGFloat = 0
     private var recoilActive = false
     private var lastFeedbackNanos: UInt64 = 0
-    private var previousPosition = CGPoint(x: CGFloat.nan, y: .nan)
 
     // Diagnostic trace: a preallocated ring of recent events, dumped on request.
     struct TraceEntry {
@@ -253,17 +248,14 @@ final class FenceEngine: @unchecked Sendable {
     }
 
     private func setDisassociated(_ want: Bool) {
-        let now = DispatchTime.now().uptimeNanoseconds
         disassociated.withLock { dis in
             if want != dis {
                 CGAssociateMouseAndMouseCursorPosition(want ? 0 : 1)
                 dis = want
-                if want { lastAssertNanos.store(now, ordering: .relaxed) }
-            } else if want, now &- lastAssertNanos.load(ordering: .relaxed) > 100_000_000 {
-                // Another process (a game, a remote-control tool) may have
-                // re-associated behind our back. Re-assert while engaged.
+            } else if want {
+                // macOS re-associates the mouse on a click, behind our back.
+                // Re-assert on every engaged event (about 35µs each).
                 CGAssociateMouseAndMouseCursorPosition(0)
-                lastAssertNanos.store(now, ordering: .relaxed)
             }
         }
     }
@@ -332,6 +324,7 @@ final class FenceEngine: @unchecked Sendable {
         let wasDisassociated = isDisassociated
         if synthetic {
             stats.syntheticEvents.add(1, ordering: .relaxed)
+            stats.lastSyntheticPID.store(Int(event.getIntegerValueField(.eventSourceUnixProcessID)), ordering: .relaxed)
         } else {
             stats.hardwareEvents.add(1, ordering: .relaxed)
             let mag = Int((dx * dx + dy * dy).squareRoot() * 100)
@@ -340,25 +333,19 @@ final class FenceEngine: @unchecked Sendable {
             }
         }
 
-        if wasDisassociated, !synthetic, let last = decider.lastPosition {
-            stats.drivenEvents.add(1, ordering: .relaxed)
-            // Compare against where the warp actually put the cursor: floored.
-            let l = event.location
-            let last = CGPoint(x: last.x.rounded(.down), y: last.y.rounded(.down))
-            if abs(l.x - last.x) > 0.5 || abs(l.y - last.y) > 0.5 {
-                stats.slips.add(1, ordering: .relaxed)
-                let m = Int(max(abs(l.x - last.x), abs(l.y - last.y)) * 100)
-                if m > stats.maxSlip.load(ordering: .relaxed) { stats.maxSlip.store(m, ordering: .relaxed) }
-                if abs(l.x - previousPosition.x.rounded(.down)) <= 0.5, abs(l.y - previousPosition.y.rounded(.down)) <= 0.5 {
-                    stats.staleSlips.add(1, ordering: .relaxed)
-                }
-            }
-        }
-        if let last = decider.lastPosition { previousPosition = last }
+        if wasDisassociated, !synthetic { stats.drivenEvents.add(1, ordering: .relaxed) }
+        let prior = decider.lastPosition
         let out = decider.handle(MotionInput(location: event.location, delta: CGVector(dx: dx, dy: dy),
                                              isSynthetic: synthetic, flags: event.flags.rawValue,
                                              disassociated: wasDisassociated))
         if out.released { recoilActive = false }
+        if out.slipped {
+            stats.slips.add(1, ordering: .relaxed)
+            if let last = prior {
+                let m = Int(max(abs(event.location.x - last.x), abs(event.location.y - last.y)) * 100)
+                if m > stats.maxSlip.load(ordering: .relaxed) { stats.maxSlip.store(m, ordering: .relaxed) }
+            }
+        }
         if out.breach {
             stats.breaches.add(1, ordering: .relaxed)
             if let g = decider.geometry, g.isInFenced(event.location) {

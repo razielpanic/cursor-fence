@@ -55,6 +55,14 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            Section("Startup") {
+                Toggle("Open at login", isOn: Binding(get: { model.launchAtLogin },
+                                                      set: { model.setLaunchAtLogin($0) }))
+                if let note = model.launchAtLoginNote {
+                    Text(note).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             Section("Advanced") {
                 LabeledContent("Guard band") {
                     HStack {
@@ -76,6 +84,7 @@ struct SettingsView: View {
                 LabeledContent("Breaches", value: "\(s["breaches"] ?? 0)")
                 LabeledContent("Glows shown / refused", value: "\(s["glowShown"] ?? 0) / \(s["glowRefused"] ?? 0)")
                 LabeledContent("Tap restarts / watchdog trips", value: "\(s["tapRestarts"] ?? 0) / \(s["watchdogTrips"] ?? 0)")
+                LabeledContent("Synthetic pointer events", value: "\(s["syntheticEvents"] ?? 0)\(model.syntheticSource.map { ", last from \($0)" } ?? "")")
                 LabeledContent("Largest single move / closest engage",
                                value: "\(s["maxHardwareDeltaPt"] ?? 0) pt / \((s["closestEngagePt"] ?? -1) < 0 ? "—" : "\(s["closestEngagePt"]!) pt")")
             }

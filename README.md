@@ -33,6 +33,7 @@ Cursor Fence is a regular Dock app; it is active the whole time it runs. ⌘Q tu
 - **Release keys.** Any combination of ⌃ ⌥ ⇧ ⌘ fn; all chosen keys must be held. Default ⌥. With none chosen, the pointer can never cross.
 - **Guard band.** How far from the wall the app takes over. Wider is safer against very fast flicks; within it, the pointer feels the same as anywhere else.
 - **Mechanism.** *Rewrite only* is a test mode that stays connected and pulls the pointer back after it crosses, the way other tools do. It exists for comparison; leave it on the default.
+- **Open at login.** Registers the app as a login item.
 - **Diagnostics.** Rebounds, breaches (times hardware motion reached the wall while connected; should be 0), glows shown and refused, tap restarts and watchdog trips.
 
 ## Building
@@ -92,13 +93,22 @@ How to read it:
 - **Failsafes, checked by hand:** after `kill -9` (mouse disconnected at the time), after quit, and after turning off Accessibility mid-session, the mouse moved normally each time.
 - **Release key:** the ⌥ positive control crossed freely.
 
-### Open questions
+### Clicking breaks the wall (measured, unresolved)
 
-- **Small unexplained slips.** About 1.5% of driven events report the cursor up to 2–3pt from where the app last put it. They do not cross the wall, because the wall check runs on positions the app computes.
-- **App switches may reconnect the mouse.** One earlier session, with clicking between apps inside a wide band, showed slips of up to 247pt. That looks like macOS reconnecting the mouse on an app switch, before the app re-asserts (it does so every 100ms while in the band). That session was also affected by the since-fixed 2x scaling; it has not been re-measured on the final build.
+The hand runs above were flicks and slides with no clicks. A run with clicks and short drags between two apps beside the wall gave a different result: `test-results/appswitch2.json`. With the mouse supposedly disconnected, 586 of 1,085 events showed the mouse moving the cursor anyway. The slips came in runs right after clicks and drags, but also during plain pushes into the wall with no click nearby. Re-asserting disconnection on every event (about 35µs each) did not stop them. Each crossing was caught and pulled back: 235 breaches, up to 57pt inside the fenced display. That is a warp-back, the thing this design set out to avoid. The capture recorded 0 leaked frames, but the rewrite-only comparison above shows it misses warp-back transients, so read that 0 as unproven.
+
+So with the local mouse, the hard wall holds for pointing and pushing, and degrades to a fast warp-back once clicks are involved. Why macOS drops the disconnection is not yet understood.
+
+### Remote control
+
+The broadcast show is run entirely over Screen Sharing on a headless compositor. If Screen Sharing input arrives as posted events, like the synthetic runs above, the cursor moves before any event tap sees it. Cursor Fence can then only pull it back, and the disconnection path does not apply. The Settings window's diagnostics name the process that last posted pointer motion, which settles this on the compositor. A likely configuration-level fix to test there: have the Screen Sharing client show only the work display, so it never sends a position on the broadcast display.
+
+### Other open questions
+
+- **Small unexplained slips.** In the flick-only runs, about 1.5% of driven events report the cursor up to 2–3pt from where the app last put it.
 - **Very fast flicks from far away.** The band widens to six times the latest move. The closest any engagement came to the wall was 53pt across all hand runs, and 180pt in the final one. A single move larger than the band from a standing start could still land inside before the app takes over. It would be counted as a breach and pulled back.
 - **Custom app cursors** larger than the system cursors (some brush cursors) can reach past the image allowance.
 
 ## Deploying to the compositor
 
-Deployment is a separate on-site step: copy `CursorFence.app` to `/Applications`, launch it, grant Accessibility, choose the broadcast display, and confirm the rebound against the shared edge. Launch-at-login is not built in yet.
+Copy `CursorFence.app` to `/Applications`, launch it, grant Accessibility, choose the broadcast display, switch on Settings › Startup › Open at login (approve it in System Settings › General › Login Items if asked), and confirm the rebound against the shared edge.

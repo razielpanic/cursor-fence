@@ -1,6 +1,7 @@
 import AppKit
 import FenceCore
 import Observation
+import ServiceManagement
 
 /// Settings and live status, owned by the main thread. Every change is
 /// pushed to the engine as a fresh config.
@@ -40,6 +41,25 @@ final class AppModel {
     private(set) var accessibilityGranted = false
     private(set) var tapRunning = false
     private(set) var stats: [String: Int] = [:]
+    private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
+    private(set) var launchAtLoginNote: String?
+    /// Name of the process that last posted pointer motion (Screen Sharing
+    /// shows up here as screensharingd).
+    private(set) var syntheticSource: String?
+
+    func setLaunchAtLogin(_ on: Bool) {
+        do {
+            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+            launchAtLoginNote = nil
+        } catch {
+            launchAtLoginNote = error.localizedDescription
+        }
+        let status = SMAppService.mainApp.status
+        launchAtLogin = status == .enabled
+        if status == .requiresApproval {
+            launchAtLoginNote = "Approve Cursor Fence in System Settings › General › Login Items."
+        }
+    }
 
     let engine: FenceEngine
     let glow = GlowOverlay()
@@ -89,6 +109,9 @@ final class AppModel {
     func refreshStatus() {
         accessibilityGranted = AXIsProcessTrusted()
         tapRunning = engine.isRunning
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+        let pid = engine.stats.lastSyntheticPID.load(ordering: .relaxed)
+        if pid > 0 { syntheticSource = processName(pid_t(pid)) }
         var s = engine.stats.snapshot()
         s["glowShown"] = glow.shown
         s["glowRefused"] = glow.refused
@@ -110,10 +133,18 @@ final class AppModel {
         out["mechanism"] = mechanism.rawValue
         out["band"] = band
         out["disassociated"] = engine.isDisassociated
+        out["syntheticSource"] = syntheticSource ?? ""
+        out["launchAtLogin"] = launchAtLogin
         if let f = glow.lastFrameCG { out["lastGlowFrame"] = [f.minX, f.minY, f.width, f.height] }
         if let g = geometry { out["zone"] = [g.zone.minX, g.zone.minY, g.zone.width, g.zone.height] }
         guard let data = try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys, .prettyPrinted]) else { return }
         try? data.write(to: AppModel.statsURL, options: .atomic)
+    }
+
+    private func processName(_ pid: pid_t) -> String {
+        var buf = [CChar](repeating: 0, count: 256)
+        let n = proc_name(pid, &buf, UInt32(buf.count))
+        return n > 0 ? "\(String(cString: buf)) (\(pid))" : "pid \(pid)"
     }
 
     static let statsURL: URL = {

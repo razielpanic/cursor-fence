@@ -345,7 +345,6 @@ func runLeak() async throws {
         "app.maxBreachDepthPt": int(after, "maxBreachDepthPt"),
         "app.drivenEvents": delta("drivenEvents"),
         "app.slips": delta("slips"),
-        "app.staleSlips": delta("staleSlips"),
         "app.maxSlipPt": int(after, "maxSlipPt"),
         "app.watchdogTrips": delta("watchdogTrips"),
         "app.tapRestarts": delta("tapRestarts"),
