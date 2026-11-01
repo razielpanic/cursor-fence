@@ -122,4 +122,7 @@ Run over SSH with `open -W build/FenceHarness.app --args leak … --json PATH` (
 | Synthetic stress, fenced | 70 of 470 | Every leak is the cursor image straddling the seam: 2–6 px at Broadcast's right edge, the hotspot was on Main. The app saw 2,933 of 11,881 posted moves (session-level coalescing); 12 rebounds, glows on Main only, 0 windows on Broadcast. |
 | ⌥ control | 0 of 255 | **Unexplained.** The control should show a cursor on Broadcast, and the app counted 0 events during it, though the engine counts synthetic moves before checking release keys. Until this is explained the control doesn't validate the detector on this Mac. |
 
-Screen Sharing input arrives from ScreensharingAgent at the session level. Still to run: RP flicking over Screen Sharing with the viewer showing all displays, then only Main.
+| RP flicking over Screen Sharing, viewer showing all displays | 90 of 769 | The pointer's tip landed 160–500 px inside Broadcast, 110–150 px below its top edge. |
+| The same, viewer showing only Main | 210 of 765 | The tip still landed up to ~240 px inside Broadcast, 47–83 px below its top edge. |
+
+Screen Sharing input arrives from ScreensharingAgent at the session level, as posted absolute positions. The app pulls the pointer back on every event, and the agent's next position puts it straight back onto Broadcast, so the cursor shows there between events. Showing only Main in the viewer doesn't stop it. The on-air goal still held in both runs: the tip never reached Broadcast's top edge, and RP saw no menu bar or presentation chrome slide down. Breaches from posted events aren't counted yet (`app.breaches` counts local mouse motion only).
