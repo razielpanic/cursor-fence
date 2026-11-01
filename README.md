@@ -109,6 +109,10 @@ The broadcast show is run entirely over Screen Sharing on a headless compositor.
 - **Very fast flicks from far away.** The band widens to six times the latest move. The closest any engagement came to the wall was 53pt across all hand runs, and 180pt in the final one. A single move larger than the band from a standing start could still land inside before the app takes over. It would be counted as a breach and pulled back.
 - **Custom app cursors** larger than the system cursors (some brush cursors) can reach past the image allowance.
 
+### Clicks over Screen Sharing (2026-11-01)
+
+Screen Sharing posts each click at the viewer's pointer, which can sit over Broadcast between pull-backs. Posted clicks on the fenced display are now dropped, along with their releases, unless a release key is held. RP confirmed on the compositor that clicks are blocked and that ⌥ lets them through.
+
 ### Corners on the dev Mac: unexplained (2026-11-01)
 
 With the session tap, the local mouse sometimes walks through the corner on the dev Mac: in one test, 455 breaches up to 221pt, with about 40% of corrections lost. A split build (hardware at the HID tap, posted events at the session tap) scored 0 breaches over 630 events in one test and 314 in the next, so the split didn't fix it. Something that varies over time is still unexplained. That build also seemed to stop fencing on the compositor, so it was reverted. **Drags are a known gap:** macOS ignores a warp while a button is held. Posting a corrected drag instead didn't move the cursor and broke later warps.
