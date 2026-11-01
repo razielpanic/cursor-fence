@@ -167,7 +167,10 @@ final class FenceEngine: @unchecked Sendable {
 
     init(config: EngineConfig) {
         pendingConfig = Mutex(config)
-        let ms = UserDefaults.standard.object(forKey: "suppressionIntervalMs") as? Double ?? 80
+        // double(forKey:) coerces a string value too; guard presence since it
+        // returns 0 when the key is absent, where the default should be 80.
+        let d = UserDefaults.standard
+        let ms = d.object(forKey: "suppressionIntervalMs") != nil ? d.double(forKey: "suppressionIntervalMs") : 80
         suppressSeconds = max(0, ms) / 1000
         if let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSetLocalEventsSuppressionInterval") {
             suppressionSetter = unsafeBitCast(sym, to: (@convention(c) (Double) -> Int32).self)
