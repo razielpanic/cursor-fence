@@ -303,6 +303,9 @@ func printJSON(_ obj: [String: Any]) {
 
 @MainActor
 func runLeak() async throws {
+    // Start every run with the pointer on the work side; a pointer already on
+    // the fenced display is free to move there and would count as leaks.
+    Driver().move(to: at(0, 300), flags: 0)
     let window = coverFencedDisplay()
     try await Task.sleep(for: .milliseconds(500))
     let recorder = Recorder()
@@ -338,7 +341,7 @@ func runLeak() async throws {
         "eventsPosted": driver.posted,
         "framesCaptured": recorder.frames.load(ordering: .relaxed),
         "leakedFrames": recorder.leakFrames.load(ordering: .relaxed),
-        "leakTimes": recorder.times.prefix(20).map { (($0 * 1000).rounded()) / 1000 },
+        "leakTimes": recorder.times.map { (($0 * 1000).rounded()) / 1000 },
         "maxBrightPixels": recorder.maxBright.load(ordering: .relaxed),
         "app.rebounds": delta("contacts"),
         "app.breaches": delta("breaches"),
