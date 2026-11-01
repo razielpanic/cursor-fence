@@ -298,7 +298,16 @@ final class FenceEngine: @unchecked Sendable {
     private func setDisassociated(_ want: Bool) {
         disassociated.withLock { dis in
             if want != dis {
-                CGAssociateMouseAndMouseCursorPosition(want ? 0 : 1)
+                if want {
+                    CGAssociateMouseAndMouseCursorPosition(0)
+                } else {
+                    // Disengage: re-couple via a zero-interval warp so it takes
+                    // even from the background, where CGAssociate(1) is ignored.
+                    // This is the one place the warp keep-alive is dropped.
+                    setSuppression(0)
+                    if let loc = CGEvent(source: nil)?.location { CGWarpMouseCursorPosition(loc) }
+                    CGAssociateMouseAndMouseCursorPosition(1)
+                }
                 dis = want
             } else if want {
                 // The window server drops disassociation when another app
@@ -401,10 +410,11 @@ final class FenceEngine: @unchecked Sendable {
         }
         record(type, event, dis: wasDisassociated, delta: CGVector(dx: dx, dy: dy), position: out.position)
         if out.warp {
-            // A warp issued while we mean to stay disassociated carries the
-            // keep-alive interval, so the window server holds the decouple even
-            // when Cursor Fence is not the front app. Any other warp carries 0.
-            setSuppression(out.wantDisassociated ? suppressSeconds : 0)
+            // Carry the keep-alive on every warp while we are engaged or mean
+            // to be, so brief drift past the band (wantDisassociated flicking
+            // off while still disassociated) does not re-couple the mouse. Only
+            // a true disengage, through setDisassociated(false), drops it.
+            setSuppression(wasDisassociated || out.wantDisassociated ? suppressSeconds : 0)
             CGWarpMouseCursorPosition(out.position)
         }
         if out.rewrite { event.location = out.position }
@@ -482,9 +492,12 @@ final class FenceEngine: @unchecked Sendable {
         if inc > 0 {
             let target = CGPoint(x: p.x + recoilNormal.dx * inc, y: p.y + recoilNormal.dy * inc)
             let q = g.step(from: p, to: target).point
-            // Recoil is a brief animation after rebound, not a disassociation,
-            // so its warps must not carry the decouple keep-alive.
-            setSuppression(0)
+            // Recoil runs while the pointer is still at the wall, so its warps
+            // must carry the keep-alive too; zeroing it here re-coupled the
+            // mouse for the 140ms of each recoil and let hardware motion walk
+            // the cursor through (the dev Mac, measured 2026-11-01: ~50% of pushes
+            // slipped until this was fixed, matching contacts × recoil time).
+            setSuppression(isDisassociated ? suppressSeconds : 0)
             CGWarpMouseCursorPosition(q)
             decider.reset(at: q)
         }

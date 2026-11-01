@@ -6,7 +6,7 @@ Built for the a broadcast installation broadcast compositor, where the fullscree
 
 **Measured on the dev Mac (2026-11-01), real mouse, final build:** 0 frames with a cursor on the fenced display, and 0 times hardware motion reached it. That's 3,793 events over 20 seconds of hard flicks and slides, including single moves of several hundred points. Details and limits are under [Measured results](#measured-results).
 
-**The hard wall held only while Cursor Fence was the active app, and a background route is now built and awaiting measurement.** The window server honors the `CGAssociateMouseAndMouseCursorPosition` request for the active app alone. A warp that carries a suppression interval decouples the mouse too, and that path has no active-app check, so driving warps can now hold the wall from the background; the build is in but RP has not yet measured it. Both are explained under [The wall needs Cursor Fence in front](#the-wall-needs-cursor-fence-in-front-relix-2026-11-01). Remote input over Screen Sharing never used the disconnect, so the compositor is unaffected.
+**The hard wall was front-app-only; a warp-based route now holds the line from the background too, but with a twitchy pointer.** The window server honors the `CGAssociateMouseAndMouseCursorPosition` request for the active app alone. A warp that carries a suppression interval decouples the mouse too, and that path has no active-app check, so driving warps now keep the pointer off the fenced display even when another app is in front. It is not as clean as the front-app wall: the decouple flaps about 15% of events in the background, so the pointer twitches at the wall, though it does not breach. Both are measured and explained under [The wall needs Cursor Fence in front](#the-wall-needs-cursor-fence-in-front-relix-2026-11-01). Remote input over Screen Sharing never used the disconnect, so the compositor is unaffected.
 
 ## How it works
 
@@ -140,16 +140,27 @@ SkyLight was pulled from the dyld shared cache on the dev Mac and read. The deco
 - **App activation re-derives the decouple from the new front process.** `foregroundSwitchNotifyProc` (0x1828d0ae4) reads the incoming front connection's recorded bit on every switch and sets the decouple from that. So when Finder or Claude comes forward its cleared bit re-couples the mouse, and re-asserting from the background cannot override it. The flip side is useful: because the bit persists on Cursor Fence's connection, its decouple re-applies by itself the moment it is front again.
 - **The warp path is not gated.** `__XWarpCursorPosition` (0x182b39474) decouples whenever the warp carries a suppression interval of 1ms or more (threshold constant 0x182c2b4e0), with no front-process check, and reschedules the release at now plus the interval. The interval is the value `CGSetLocalEventsSuppressionInterval` stores (SkyLight global 0x1eb11c000+0xb3c); every warp reads it. So the 250ms freeze seen earlier was this decouple persisting after the last warp, not event suppression — the warp path never touches the separate local-events-suppression mechanism. The full branch logic is in the shared session notes.
 
-#### The background fix (built 2026-11-01, not yet measured)
+#### The background fix and what it reached (2026-11-01)
 
-`FenceEngine` now sets the suppression interval per warp: driving warps that mean to hold the wall carry `suppressSeconds` (default 80ms, `defaults write com.razielpanic.CursorFence suppressionIntervalMs -float <n>`), so each one re-arms the decouple from whatever app is front; recoil warps and the hand-back re-couple carry 0. When Cursor Fence is front, the explicit Associate request already set the server's "explicitly decoupled" flag, which makes the warp path skip, so front behavior is unchanged. The watchdog still re-associates within 150ms if the tap is ever starved, so the interval fails safe.
+`FenceEngine` now sets the suppression interval per warp: every warp issued while the fence means to stay disassociated carries `suppressSeconds` (default 80ms, `defaults write com.razielpanic.CursorFence suppressionIntervalMs -float <n>`), so each re-arms the decouple from whatever app is front, and brief drift past the band does not drop it. The one place the decouple is released is a true disengage, through a single zero-interval warp (which re-couples even from the background, where `CGAssociate(1)` is ignored). When Cursor Fence is front, the explicit Associate request sets the server's "explicitly decoupled" flag, which makes the warp path skip, so front behavior is unchanged. The watchdog still re-associates within 150ms if the tap is starved, so the interval fails safe.
 
-This is built and installed but unmeasured: it needs `scripts/corner-windows.sh` run by hand with Finder and Claude in front, across at least three runs, reaching about the 99% the Cursor-Fence-in-front windows get. Until then, do not assume the background wall holds.
+Measured across three hardware runs with the fix installed (Device Control and Data Access re-granted; RP pushing, no clicks):
+
+| Front app | held % (trace-windows) | Cursor on the fenced display |
+|---|---|---|
+| Cursor Fence | 99–100% | none |
+| Finder | 82–88% | none |
+| Claude | 82–90% | none |
+| Photos | 74% | none |
+
+The practical goal is met from the background: the pointer does not reach the fenced display (deepest incursion across the session was 1pt, and RP saw no breach by eye). It is not as clean as the front-app wall. The "held" figure is lower because the decouple byte flaps about 15% of events in the background, and each flap lets one hardware delta nudge the cursor a few points before the next warp pulls it back, which RP sees as a twitchy pointer at the wall. In the front app the explicit decouple holds the byte solidly, so it is smooth.
+
+The flap is not from the causes checked: recoil warps now carry the keep-alive (not a zero interval), band-exit no longer re-couples, inter-event gaps exceed the 80ms keep-alive only ~1% of the time, and the keep-alive callback is rescheduled, not appended (`_reschedule_callback_on_session` runs in replace mode, so one fuse is pushed forward each warp, never firing during motion). The residual ~15% flap is recorded as unexplained: a background app sets the decouple only through the asynchronous per-warp keep-alive, where the front app sets it synchronously and holds it with the sticky "explicitly decoupled" flag that no background app can set.
 
 Consequences:
 
 - **The compositor is unaffected.** Its input is Screen Sharing's posted events, which the disconnect never covered.
-- **On a Mac with a local mouse**, the front-app wall was already hard; the background wall now has a built route through the warp path, awaiting measurement. Activating Cursor Fence near the wall stays ruled out: it would take keyboard focus from the user.
+- **On a Mac with a local mouse**, the front-app wall is hard and smooth. The background wall now holds the line — the pointer stays off the fenced display — but twitches, up from the old state where it walked through at ~40% held. Activating Cursor Fence near the wall stays ruled out: it would take keyboard focus from the user.
 - **Drags are a separate known gap:** macOS ignores a warp while a button is held. Posting a corrected drag instead didn't move the cursor and broke later warps.
 
 ## Deploying to the compositor

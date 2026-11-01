@@ -1,0 +1,36 @@
+{
+  "band" : 240,
+  "blockedClicks" : 0,
+  "breaches" : 1249,
+  "closestEngagePt" : 211,
+  "contacts" : 173,
+  "disassociated" : true,
+  "drivenEvents" : 10952,
+  "engagements" : 47,
+  "fencedUUID" : "C2183EAF-C0F8-48AE-A739-E151798D6E4B",
+  "glowRefused" : 0,
+  "glowShown" : 173,
+  "hardwareEvents" : 13256,
+  "lastGlowFrame" : [
+    0,
+    209,
+    90,
+    180
+  ],
+  "launchAtLogin" : false,
+  "maxBreachDepthPt" : 567,
+  "maxHardwareDeltaPt" : 689,
+  "maxSlipPt" : 587,
+  "mechanism" : "disassociate",
+  "slips" : 2186,
+  "syntheticEvents" : 0,
+  "syntheticSource" : "",
+  "tapRestarts" : 0,
+  "watchdogTrips" : 0,
+  "zone" : [
+    -4136,
+    -1469,
+    4156,
+    1788
+  ]
+}
