@@ -40,6 +40,8 @@ final class EngineStats: Sendable {
     let lastSyntheticPID = Atomic<Int>(0)
     /// Largest slip, in hundredths of a point.
     let maxSlip = Atomic<Int>(0)
+    /// Posted clicks dropped because they landed on the fenced display.
+    let blockedClicks = Atomic<Int>(0)
 
     func snapshot() -> [String: Int] {
         [
@@ -47,6 +49,7 @@ final class EngineStats: Sendable {
             "syntheticEvents": syntheticEvents.load(ordering: .relaxed),
             "contacts": contacts.load(ordering: .relaxed),
             "breaches": breaches.load(ordering: .relaxed),
+            "blockedClicks": blockedClicks.load(ordering: .relaxed),
             "tapRestarts": tapRestarts.load(ordering: .relaxed),
             "watchdogTrips": watchdogTrips.load(ordering: .relaxed),
             "engagements": engagements.load(ordering: .relaxed),
@@ -92,6 +95,8 @@ final class FenceEngine: @unchecked Sendable {
     private var recoilNormal = CGVector.zero
     private var recoilApplied: CGFloat = 0
     private var recoilActive = false
+    /// Buttons whose posted press was dropped, so the release is dropped too.
+    private var blockedButtons: Set<Int64> = []
     private var lastFeedbackNanos: UInt64 = 0
 
     // Diagnostic trace: a preallocated ring of recent events, dumped on request.
@@ -309,7 +314,8 @@ final class FenceEngine: @unchecked Sendable {
 
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp:
             record(type, event, dis: isDisassociated, delta: .zero, position: event.location)
-            return Unmanaged.passUnretained(event)
+            refreshConfig()
+            return blocksPostedClick(type, event) ? nil : Unmanaged.passUnretained(event)
 
         default:
             return Unmanaged.passUnretained(event)
@@ -372,6 +378,23 @@ final class FenceEngine: @unchecked Sendable {
 
         if let c = out.contact { contact(c, at: out.position) }
         return Unmanaged.passUnretained(event)
+    }
+
+    /// Screen Sharing posts each click at the viewer's pointer, which can be
+    /// over the fenced display between pull-backs, so the click landed on
+    /// its windows (compositor, 2026-11-01). Drop posted presses there, and
+    /// their releases, unless a release key is held.
+    private func blocksPostedClick(_ type: CGEventType, _ event: CGEvent) -> Bool {
+        let button = event.getIntegerValueField(.mouseEventButtonNumber)
+        if type == .leftMouseUp || type == .rightMouseUp {
+            return blockedButtons.remove(button) != nil
+        }
+        guard event.getIntegerValueField(.eventSourceUnixProcessID) != 0,
+              let g = decider.geometry, g.isInFenced(event.location),
+              !decider.releaseKeys.isHeld(flags: event.flags.rawValue) else { return false }
+        blockedButtons.insert(button)
+        stats.blockedClicks.add(1, ordering: .relaxed)
+        return true
     }
 
     private func refreshConfig() {
