@@ -23,3 +23,16 @@ xcrun actool Resources/AppIcon.icon --compile "$APP/Contents/Resources" --platfo
 codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$APP"
 codesign --verify --strict --verbose=1 "$APP"
 echo "built $APP"
+
+# --install: replace the copy in /Applications and relaunch it. Both Macs run
+# Cursor Fence from there; a second copy elsewhere confuses Login Items and
+# Accessibility. A rebuild may need Accessibility toggled off and on again.
+if [[ "${1:-}" == "--install" ]]; then
+  osascript -e 'quit app id "com.razielpanic.CursorFence"' 2>/dev/null || true
+  for _ in {1..10}; do pgrep -f "CursorFence.app/Contents/MacOS/CursorFence" >/dev/null || break; sleep 0.5; done
+  rm -rf /Applications/CursorFence.app
+  ditto "$APP" /Applications/CursorFence.app
+  rm -rf "$APP"
+  open /Applications/CursorFence.app
+  echo "installed /Applications/CursorFence.app"
+fi

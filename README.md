@@ -111,7 +111,7 @@ The broadcast show is run entirely over Screen Sharing on a headless compositor.
 
 ## Deploying to the compositor
 
-Copy `CursorFence.app` to `/Applications`, launch it, grant Accessibility, choose the broadcast display, switch on Settings › Startup › Open at login (approve it in System Settings › General › Login Items if asked), and confirm the rebound against the shared edge.
+Both Macs run Cursor Fence from `/Applications`. On the dev Mac, `scripts/build-app.sh --install` builds it, replaces the installed copy and relaunches it. On the compositor, copy the built app to `/Applications` and remove the copy in `build/`. Launch it, grant Accessibility, choose the broadcast display, switch on Settings › Startup › Open at login (approve it in System Settings › General › Login Items if asked), and confirm the rebound against the shared edge.
 
 ### Compositor results so far (2026-11-01, macOS 26.6.2, off-air)
 
