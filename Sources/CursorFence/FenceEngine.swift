@@ -170,7 +170,7 @@ final class FenceEngine: @unchecked Sendable {
         // double(forKey:) coerces a string value too; guard presence since it
         // returns 0 when the key is absent, where the default should be 80.
         let d = UserDefaults.standard
-        let ms = d.object(forKey: "suppressionIntervalMs") != nil ? d.double(forKey: "suppressionIntervalMs") : 80
+        let ms = d.object(forKey: "suppressionIntervalMs") != nil ? d.double(forKey: "suppressionIntervalMs") : 2000
         suppressSeconds = max(0, ms) / 1000
         if let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSetLocalEventsSuppressionInterval") {
             suppressionSetter = unsafeBitCast(sym, to: (@convention(c) (Double) -> Int32).self)
@@ -409,21 +409,17 @@ final class FenceEngine: @unchecked Sendable {
             log.error("breach: hardware motion reached the zone while associated")
         }
         record(type, event, dis: wasDisassociated, delta: CGVector(dx: dx, dy: dy), position: out.position)
-        let engaged = wasDisassociated || out.wantDisassociated
-        if engaged {
-            // Warp on every engaged event, even when the cursor needs no
-            // correction. Pushing into the wall pins the cursor at the band
-            // edge, so the decider asks for no warp, and with nothing to renew
-            // the keep-alive the decouple lapsed between corrections and the
-            // pointer twitched (the dev Mac, 2026-11-01). A warp to the current
-            // position is a no-op move that re-arms the decouple, so the byte
-            // stays set continuously the way the front app's explicit decouple
-            // does. Only a true disengage, through setDisassociated(false),
-            // drops it.
-            setSuppression(suppressSeconds)
-            CGWarpMouseCursorPosition(out.position)
-        } else if out.warp {
-            setSuppression(0)
+        if out.warp {
+            // Warp only when the cursor actually needs moving. Carrying the
+            // keep-alive on a correction holds the decouple; the long interval
+            // (default 2s) bridges the stretches where the cursor is pinned at
+            // the wall and no correction fires, so the decouple does not lapse
+            // between corrections — that lapse was the background twitch.
+            // Warping on every event instead would re-arm it too, but setting
+            // the cursor position hundreds of times a second reads to macOS as
+            // a pointer shake and triggered shake-to-locate. Only a true
+            // disengage, through setDisassociated(false), drops the decouple.
+            setSuppression(wasDisassociated || out.wantDisassociated ? suppressSeconds : 0)
             CGWarpMouseCursorPosition(out.position)
         }
         if out.rewrite { event.location = out.position }
