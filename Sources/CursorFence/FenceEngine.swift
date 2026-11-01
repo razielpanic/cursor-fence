@@ -409,12 +409,21 @@ final class FenceEngine: @unchecked Sendable {
             log.error("breach: hardware motion reached the zone while associated")
         }
         record(type, event, dis: wasDisassociated, delta: CGVector(dx: dx, dy: dy), position: out.position)
-        if out.warp {
-            // Carry the keep-alive on every warp while we are engaged or mean
-            // to be, so brief drift past the band (wantDisassociated flicking
-            // off while still disassociated) does not re-couple the mouse. Only
-            // a true disengage, through setDisassociated(false), drops it.
-            setSuppression(wasDisassociated || out.wantDisassociated ? suppressSeconds : 0)
+        let engaged = wasDisassociated || out.wantDisassociated
+        if engaged {
+            // Warp on every engaged event, even when the cursor needs no
+            // correction. Pushing into the wall pins the cursor at the band
+            // edge, so the decider asks for no warp, and with nothing to renew
+            // the keep-alive the decouple lapsed between corrections and the
+            // pointer twitched (the dev Mac, 2026-11-01). A warp to the current
+            // position is a no-op move that re-arms the decouple, so the byte
+            // stays set continuously the way the front app's explicit decouple
+            // does. Only a true disengage, through setDisassociated(false),
+            // drops it.
+            setSuppression(suppressSeconds)
+            CGWarpMouseCursorPosition(out.position)
+        } else if out.warp {
+            setSuppression(0)
             CGWarpMouseCursorPosition(out.position)
         }
         if out.rewrite { event.location = out.position }
