@@ -372,19 +372,6 @@ final class FenceEngine: @unchecked Sendable {
             log.error("breach: hardware motion reached the zone while associated")
         }
         record(type, event, dis: wasDisassociated, delta: CGVector(dx: dx, dy: dy), position: out.position)
-        // macOS ignores a warp while a button is held, so a drag walked through
-        // the wall (the dev Mac, 2026-11-01: 90 of 107 drag corrections lost). A
-        // posted event does move the cursor: send the drag on from where it
-        // belongs and drop the original.
-        let dragging = type == .leftMouseDragged || type == .rightMouseDragged || type == .otherMouseDragged
-        if out.warp, dragging, !synthetic, let moved = event.copy() {
-            moved.location = out.position
-            moved.setIntegerValueField(.eventSourceUnixProcessID, value: Int64(ownPID))
-            moved.post(tap: .cgSessionEventTap)
-            setDisassociated(out.wantDisassociated)
-            if let c = out.contact { contact(c, at: out.position) }
-            return nil
-        }
         if out.warp { CGWarpMouseCursorPosition(out.position) }
         if out.rewrite { event.location = out.position }
 
@@ -494,21 +481,14 @@ private let hidTapCallback: CGEventTapCallBack = { _, type, event, refcon in
     return Unmanaged<FenceEngine>.fromOpaque(refcon).takeUnretainedValue().handle(type: type, event: event)
 }
 
-/// Posted events only; hardware events were handled at the HID tap, and our
-/// own corrected drags pass straight through.
+/// Posted events only; hardware events were handled at the HID tap.
 private let sessionTapCallback: CGEventTapCallBack = { _, type, event, refcon in
-    guard let refcon, isTapControl(type) || (isPosted(event) && !isOwn(event)) else { return Unmanaged.passUnretained(event) }
+    guard let refcon, isTapControl(type) || isPosted(event) else { return Unmanaged.passUnretained(event) }
     return Unmanaged<FenceEngine>.fromOpaque(refcon).takeUnretainedValue().handle(type: type, event: event)
 }
 
 private func isPosted(_ event: CGEvent) -> Bool {
     event.getIntegerValueField(.eventSourceUnixProcessID) != 0
-}
-
-private let ownPID = getpid()
-
-private func isOwn(_ event: CGEvent) -> Bool {
-    event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(ownPID)
 }
 
 private func isTapControl(_ type: CGEventType) -> Bool {
