@@ -149,9 +149,36 @@ final class FenceEngine: @unchecked Sendable {
     static let recoilDuration: Double = 0.14
     static let feedbackCooldown: UInt64 = 300_000_000
 
+    /// Seconds the warp-triggered mouse/cursor decouple is held alive. A warp
+    /// carrying a suppression interval >= 1ms makes the window server decouple
+    /// the mouse from the cursor and reschedule the release at now+interval —
+    /// and that path (SkyLight `__XWarpCursorPosition`) has no front-process
+    /// check, unlike the `CGAssociateMouseAndMouseCursorPosition` request,
+    /// which is honored only for the active app. So driving warps keep the
+    /// wall up even when another app is in front, the background case the
+    /// Associate call alone cannot reach. 0 restores the old behavior, where
+    /// every warp lands in the <1ms re-couple branch. Override with
+    /// `defaults write com.razielpanic.CursorFence suppressionIntervalMs <n>`.
+    private let suppressSeconds: Double
+    /// CGSetLocalEventsSuppressionInterval: deprecated, hidden from Swift,
+    /// still exported by CoreGraphics. Resolved once; it stores a float under
+    /// a client lock (no round-trip), read by the next warp.
+    private let suppressionSetter: (@convention(c) (Double) -> Int32)?
+
     init(config: EngineConfig) {
         pendingConfig = Mutex(config)
+        let ms = UserDefaults.standard.object(forKey: "suppressionIntervalMs") as? Double ?? 80
+        suppressSeconds = max(0, ms) / 1000
+        if let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSetLocalEventsSuppressionInterval") {
+            suppressionSetter = unsafeBitCast(sym, to: (@convention(c) (Double) -> Int32).self)
+        } else {
+            suppressionSetter = nil
+            log.error("CGSetLocalEventsSuppressionInterval not found")
+        }
     }
+
+    /// Sets the suppression interval the next warp will carry (seconds).
+    private func setSuppression(_ seconds: Double) { _ = suppressionSetter?(seconds) }
 
     var isRunning: Bool { lifecycle.withLock { tap != nil } }
     var isDisassociated: Bool { disassociated.withLock { $0 } }
@@ -188,7 +215,7 @@ final class FenceEngine: @unchecked Sendable {
             return false
         }
         tap = port
-        Self.zeroSuppressionInterval()
+        setSuppression(0)
         lastTapEventNanos.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
 
         let ready = DispatchSemaphore(value: 0)
@@ -250,6 +277,14 @@ final class FenceEngine: @unchecked Sendable {
     func associate(reason: String) {
         disassociated.withLock { dis in
             if dis {
+                // CGAssociate(1) re-couples only when Cursor Fence is the front
+                // app. From the background, the decouple is instead held by the
+                // last driving warp's keep-alive; a warp carrying a <1ms
+                // interval is what lands in the window server's re-couple
+                // branch, so force one to the current location (a no-op move)
+                // to drop it now rather than waiting for the keep-alive to lapse.
+                setSuppression(0)
+                if let loc = CGEvent(source: nil)?.location { CGWarpMouseCursorPosition(loc) }
                 CGAssociateMouseAndMouseCursorPosition(1)
                 dis = false
                 log.debug("associated: \(reason, privacy: .public)")
@@ -275,22 +310,14 @@ final class FenceEngine: @unchecked Sendable {
 
     // MARK: Moving the cursor
 
-    /// Measured on the dev Mac (2026-11-01): after each warp, macOS ignores
-    /// hardware motion for 250ms. While the mouse is disassociated that is
-    /// invisible, but at hand-back the pointer froze for 250ms at the band
-    /// edge. Zeroing the interval cut that to 4ms. Rewriting a driven event's
-    /// location does not move the cursor (88 of 1682 followed), and posting a
-    /// zero-suppression event instead of warping left ~8ms freezes.
-    static func zeroSuppressionInterval() {
-        // Deprecated and hidden from Swift; still exported by CoreGraphics.
-        typealias Fn = @convention(c) (Double) -> Int32
-        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSetLocalEventsSuppressionInterval") else {
-            log.error("CGSetLocalEventsSuppressionInterval not found")
-            return
-        }
-        let rc = unsafeBitCast(sym, to: Fn.self)(0)
-        log.notice("CGSetLocalEventsSuppressionInterval(0) = \(rc)")
-    }
+    // After each warp the window server holds the mouse/cursor decouple for
+    // the warp's suppression interval (SkyLight, the dev Mac, disassembled
+    // 2026-11-01). With the default ~250ms interval the pointer froze for
+    // 250ms at the band edge on hand-back; that "freeze" is the decouple
+    // persisting, not event suppression (the warp path does not touch the
+    // separate local-events-suppression mechanism). The driving-warp interval
+    // now carries that decouple on purpose (see `suppressSeconds`); the
+    // re-couple warp in `associate()` drops it promptly on hand-back.
 
     // MARK: Tap
 
@@ -370,7 +397,13 @@ final class FenceEngine: @unchecked Sendable {
             log.error("breach: hardware motion reached the zone while associated")
         }
         record(type, event, dis: wasDisassociated, delta: CGVector(dx: dx, dy: dy), position: out.position)
-        if out.warp { CGWarpMouseCursorPosition(out.position) }
+        if out.warp {
+            // A warp issued while we mean to stay disassociated carries the
+            // keep-alive interval, so the window server holds the decouple even
+            // when Cursor Fence is not the front app. Any other warp carries 0.
+            setSuppression(out.wantDisassociated ? suppressSeconds : 0)
+            CGWarpMouseCursorPosition(out.position)
+        }
         if out.rewrite { event.location = out.position }
 
         if out.wantDisassociated, !wasDisassociated, let g = decider.geometry {
@@ -446,6 +479,9 @@ final class FenceEngine: @unchecked Sendable {
         if inc > 0 {
             let target = CGPoint(x: p.x + recoilNormal.dx * inc, y: p.y + recoilNormal.dy * inc)
             let q = g.step(from: p, to: target).point
+            // Recoil is a brief animation after rebound, not a disassociation,
+            // so its warps must not carry the decouple keep-alive.
+            setSuppression(0)
             CGWarpMouseCursorPosition(q)
             decider.reset(at: q)
         }

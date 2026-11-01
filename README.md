@@ -6,7 +6,7 @@ Built for the a broadcast installation broadcast compositor, where the fullscree
 
 **Measured on the dev Mac (2026-11-01), real mouse, final build:** 0 frames with a cursor on the fenced display, and 0 times hardware motion reached it. That's 3,793 events over 20 seconds of hard flicks and slides, including single moves of several hundred points. Details and limits are under [Measured results](#measured-results).
 
-**The hard wall holds only while Cursor Fence is the active app.** macOS honors the mouse disconnect from the active app alone. With any other app in front, the local mouse stays connected and the fence falls back to pulling the pointer back after it crosses. Measured and explained under [The wall needs Cursor Fence in front](#the-wall-needs-cursor-fence-in-front-relix-2026-11-01). Remote input over Screen Sharing never used the disconnect, so the compositor is unaffected.
+**The hard wall held only while Cursor Fence was the active app, and a background route is now built and awaiting measurement.** The window server honors the `CGAssociateMouseAndMouseCursorPosition` request for the active app alone. A warp that carries a suppression interval decouples the mouse too, and that path has no active-app check, so driving warps can now hold the wall from the background; the build is in but RP has not yet measured it. Both are explained under [The wall needs Cursor Fence in front](#the-wall-needs-cursor-fence-in-front-relix-2026-11-01). Remote input over Screen Sharing never used the disconnect, so the compositor is unaffected.
 
 ## How it works
 
@@ -127,14 +127,28 @@ Measured with `scripts/corner-windows.sh`: RP pushed the real mouse into the cor
 | Finder | 30%, 32% | 36%, 24% |
 | Claude | 33% | 34%, 20% |
 
-The traces are `test-results/corner-20261101-143557.csv` and `corner-20261101-144755.csv`. Run 2 was a build that also set the window server's `SetsCursorInBackground` connection property, which governs the cursor image; it made no difference and was dropped. The slipped events carry motion in points, as connected motion does, where disconnected motion arrives in pixels. In the background windows, most of the corrections that "held" were the cursor pinned at the screen's top edge.
+The traces are `test-results/corner-20261101-143557.csv` and `corner-20261101-144755.csv`. Run 2 was a build that also set the window server's `SetsCursorInBackground` connection property; it made no difference and was dropped. The disassembly below shows why: that property is not consulted on the associate, warp, or foreground-switch paths. The slipped events carry motion in points, as connected motion does, where disconnected motion arrives in pixels. In the background windows, most of the corrections that "held" were the cursor pinned at the screen's top edge.
 
-This accounts for the earlier mixed results. Re-scored by front app, the older app-switch traces show the mouse connected under FenceHarness, System Settings and Claude alike. `scripts/build-app.sh --install` relaunches the app, which puts it in front, so a test run right after an install sees the hard wall until something else is clicked. That probably explains the split build's 0-breach run and its 314-breach run that followed, but those runs left no trace, so it isn't confirmed. AppKit points the same way: it carries machinery for a remote view to have its host app disconnect the mouse on its behalf.
+This accounts for the earlier mixed results. Re-scored by front app, the older app-switch traces show the mouse connected under FenceHarness, System Settings and Claude alike. `scripts/build-app.sh --install` relaunches the app, which puts it in front, so a test run right after an install sees the hard wall until something else is clicked. That probably explains the split build's 0-breach run and its 314-breach run that followed, but those runs left no trace, so it isn't confirmed.
+
+#### What the window server checks (SkyLight, disassembled 2026-11-01)
+
+SkyLight was pulled from the dyld shared cache on the dev Mac and read. The decouple is one system-wide byte that `_CGXDecoupleCursorAndMouse` writes with no caller check. What differs is who gets to call it.
+
+- **The Associate request is gated on the front process.** `__XAssociateMouseAndMouseCursorPosition` records the request on the caller's own connection, then calls the decouple only when the caller is `_CGXForegroundConnection()`, which resolves to `_CPXGetFrontProcessesConnectionID` — the front process. A background app's request is remembered but never applied.
+- **App activation re-derives the decouple from the new front process.** `foregroundSwitchNotifyProc` reads the incoming front connection's recorded bit on every switch and sets the decouple from that. So when Finder or Claude comes forward its cleared bit re-couples the mouse, and re-asserting from the background cannot override it. The flip side is useful: because the bit persists on Cursor Fence's connection, its decouple re-applies by itself the moment it is front again.
+- **The warp path is not gated.** `__XWarpCursorPosition` decouples whenever the warp carries a suppression interval of 1ms or more, with no front-process check, and reschedules the release at now plus the interval. The interval is the value `CGSetLocalEventsSuppressionInterval` stores; every warp reads it. So the 250ms freeze seen earlier was this decouple persisting after the last warp, not event suppression — the warp path never touches the separate local-events-suppression mechanism. Full addresses and the branch logic are in the shared session notes.
+
+#### The background fix (built 2026-11-01, not yet measured)
+
+`FenceEngine` now sets the suppression interval per warp: driving warps that mean to hold the wall carry `suppressSeconds` (default 80ms, `defaults write com.razielpanic.CursorFence suppressionIntervalMs <n>`), so each one re-arms the decouple from whatever app is front; recoil warps and the hand-back re-couple carry 0. When Cursor Fence is front, the explicit Associate request already set the server's "explicitly decoupled" flag, which makes the warp path skip, so front behavior is unchanged. The watchdog still re-associates within 150ms if the tap is ever starved, so the interval fails safe.
+
+This is built and installed but unmeasured: it needs `scripts/corner-windows.sh` run by hand with Finder and Claude in front, across at least three runs, reaching about the 99% the Cursor-Fence-in-front windows get. Until then, do not assume the background wall holds.
 
 Consequences:
 
 - **The compositor is unaffected.** Its input is Screen Sharing's posted events, which the disconnect never covered.
-- **On a Mac with a local mouse**, the wall is hard only while Cursor Fence is in front. The rest of the time it is a fast pull-back. No fix is known that keeps another app in front: making Cursor Fence active near the wall would take keyboard focus from the user.
+- **On a Mac with a local mouse**, the front-app wall was already hard; the background wall now has a built route through the warp path, awaiting measurement. Activating Cursor Fence near the wall stays ruled out: it would take keyboard focus from the user.
 - **Drags are a separate known gap:** macOS ignores a warp while a button is held. Posting a corrected drag instead didn't move the cursor and broke later warps.
 
 ## Deploying to the compositor
