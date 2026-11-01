@@ -61,7 +61,7 @@ final class EngineStats: Sendable {
     }
 }
 
-/// The wall. Runs a HID-level event tap on its own thread; every per-event
+/// The wall. Runs a session-level event tap on its own thread; every per-event
 /// path stays off the main thread and allocation-free.
 ///
 /// Invariant: the mouse is disassociated only while the tap is alive and the
@@ -170,7 +170,11 @@ final class FenceEngine: @unchecked Sendable {
                                  .otherMouseDragged, .flagsChanged, .leftMouseDown, .leftMouseUp,
                                  .rightMouseDown, .rightMouseUp]
             .reduce(0) { $0 | (1 << $1.rawValue) }
-        guard let port = CGEvent.tapCreate(tap: .cghidEventTap, place: .headInsertEventTap,
+        // Session level, not HID: Screen Sharing's ScreensharingAgent posts
+        // pointer events there, so a HID tap never sees remote control
+        // (measured on the compositor, 2026-11-01). Hardware events pass
+        // through the session tap too.
+        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
                                            options: .defaultTap, eventsOfInterest: mask,
                                            callback: tapCallback,
                                            userInfo: Unmanaged.passUnretained(self).toOpaque()) else {

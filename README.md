@@ -11,7 +11,7 @@ Built for the a broadcast installation broadcast compositor, where the fullscree
 Every tool surveyed (CursorBridge, CursorConfine, MouseLock) moves the pointer back *after* it crosses, so a frame of cursor can reach the other display. Cursor Fence stops the mouse from moving the cursor in the first place:
 
 1. Far from the wall, the mouse behaves normally.
-2. Within a guard band of the wall (240pt by default, wider when the pointer is moving fast), Cursor Fence disconnects the mouse from the cursor (`CGAssociateMouseAndMouseCursorPosition(false)`). It then moves the cursor itself from each mouse event's motion, through a HID-level event tap, stopping at the wall and sliding along it.
+2. Within a guard band of the wall (240pt by default, wider when the pointer is moving fast), Cursor Fence disconnects the mouse from the cursor (`CGAssociateMouseAndMouseCursorPosition(false)`). It then moves the cursor itself from each mouse event's motion, through a session-level event tap, stopping at the wall and sliding along it.
 3. Once the pointer leaves the band, or a release key goes down, the mouse is reconnected.
 
 Details that turned out to matter, each measured on the dev Mac:
