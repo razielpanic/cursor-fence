@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IDENTITY="${SIGN_IDENTITY:-Apple Development: you@example.com}"
+IDENTITY="${SIGN_IDENTITY:-Apple Development}"
 APP=build/FenceHarness.app
 
 swift build -c release --arch arm64 --product FenceHarness

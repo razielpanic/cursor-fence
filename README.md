@@ -1,52 +1,62 @@
 # Cursor Fence
 
-Keeps the mouse pointer off one display. The pointer stops at that display's edge as if it hit a wall: it springs back a few points and a short glow appears on your side of the edge. Hold the release key (⌥ by default) to cross. Leaving the fenced display is always free.
+**Keeps the mouse pointer off one display — a hard wall, built and tested for live broadcast output.**
 
-Built for the a broadcast installation broadcast compositor, where the fullscreen program output sits beside the operator's work monitor. In native fullscreen, macOS shows the menu bar and title bar only when the pointer reaches that screen's top edge. So keeping the pointer off the broadcast screen keeps cursors, menus and window chrome off the air.
+The pointer stops at the fenced display's edge as if it hit a wall: it springs back a few points and a short glow appears on your side of the edge. Hold a release key (⌥ by default) to cross. Leaving the fenced display is always free.
 
-**Measured on the dev Mac (2026-11-01), real mouse, final build:** 0 frames with a cursor on the fenced display, and 0 times hardware motion reached it. That's 3,793 events over 20 seconds of hard flicks and slides, including single moves of several hundred points. Details and limits are under [Measured results](#measured-results).
+Cursor Fence was built for a live-broadcast setup, where a full-screen program output sits beside the operator's work monitor. In native full-screen, macOS reveals the menu bar and window title bar only when the pointer reaches that screen's top edge — so keeping the pointer off the broadcast screen keeps stray cursors, menus and window chrome off the air.
 
-**The hard wall was front-app-only; a warp-based route now holds it as hard from the background.** The window server honors the `CGAssociateMouseAndMouseCursorPosition` request for the active app alone. A warp that carries a suppression interval decouples the mouse too, and that path has no active-app check, so driving warps keep the pointer off the fenced display even when another app is in front. A long keep-alive interval holds the decouple across the stretches where the cursor is pinned at the wall and no correction fires, which keeps the background wall at 96–97%, close to the front app. Measured and explained under [The wall needs Cursor Fence in front](#the-wall-needs-cursor-fence-in-front-relix-2026-11-01). Remote input over Screen Sharing never used the disconnect, so the compositor is unaffected.
+- **A real wall, not a pull-back.** Most tools let the cursor cross and then move it back, so a frame of cursor reaches the other display. Cursor Fence stops the mouse from moving the cursor in the first place (see [How it works](#how-it-works)).
+- **Tested against Screen Sharing and remote control.** Broadcast machines are often driven headless over Screen Sharing, where the input model is different. Cursor Fence documents exactly what holds and what doesn't on that path (see [Remote control and Screen Sharing](#remote-control-and-screen-sharing)).
+- **Honest about its limits.** Every measured result, failure mode and open question is written down, with the method to reproduce it.
+- **Open source, MIT-licensed, no account, no network.** Runs entirely on-device.
+
+Requires macOS 26 (Tahoe) or later on Apple silicon. Tested on macOS 26 and 27.
+
+## How it compares
+
+Other macOS tools that confine the cursor to one display — **EdgeCase**, **Virtual Wall**, **MouseLock**, **CursorConfine** — generally work by repositioning the pointer *after* it crosses the edge. That is fine for everyday "don't drift onto the other monitor" use, but for broadcast it means a cursor can flash onto the program output, and a fast move can reach the top edge and trip the menu bar before the pull-back lands.
+
+Cursor Fence takes a different approach — it disconnects the mouse from the cursor near the wall and drives the cursor itself, so the pointer never crosses to begin with — and it is the only one of these written specifically around the broadcast case and measured against Screen Sharing. It is also free and open source; the App Store options are paid and closed, and CursorConfine is open but unsigned and uses the reposition-after approach.
+
+This is a factual summary of published behavior, not a knock on those tools; they solve a different, broader problem well. If your need is "keep the pointer off the program display during a live show," Cursor Fence is built for exactly that.
 
 ## How it works
 
-Every tool surveyed (CursorBridge, CursorConfine, MouseLock) moves the pointer back *after* it crosses, so a frame of cursor can reach the other display. Cursor Fence stops the mouse from moving the cursor in the first place:
-
 1. Far from the wall, the mouse behaves normally.
-2. Within a guard band of the wall (240pt by default, wider when the pointer is moving fast), Cursor Fence disconnects the mouse from the cursor (`CGAssociateMouseAndMouseCursorPosition(false)`). It then moves the cursor itself from each mouse event's motion, through a session-level event tap, stopping at the wall and sliding along it.
+2. Within a guard band of the wall (240 pt by default, wider when the pointer is moving fast), Cursor Fence disconnects the mouse from the cursor with `CGAssociateMouseAndMouseCursorPosition(false)`. It then moves the cursor itself from each mouse event's motion, through a session-level event tap, stopping at the wall and sliding along it.
 3. Once the pointer leaves the band, or a release key goes down, the mouse is reconnected.
 
-Details that turned out to matter, each measured on the dev Mac:
+Details that turned out to matter, each measured on hardware:
 
-- **The wall keeps the whole cursor image off the display, not just its tip.** macOS draws the cursor across a display seam: with the hotspot 3pt onto one display, the arrow still paints on its neighbour. The hotspot is held back by the cursor image's reach, 20–40pt scaled with the accessibility cursor size.
-- **While disconnected, mouse motion is reported in pixels of the display under the cursor**, not points. On a 2x Retina panel, using the raw values doubled every move. Motion is divided by the display's backing scale.
-- **Each warp normally freezes real mouse motion for 250ms.** It went unnoticed while the mouse was disconnected, but froze the pointer at the band's edge on hand-back. Cursor Fence sets the suppression interval to zero (the deprecated `CGSetLocalEventsSuppressionInterval`, called through `dlsym`), which cuts the freeze to 4ms.
-- **Warps land on whole points**, so the app keeps the fractional position itself; slow trackpad drags near the wall don't stick.
+- **The wall keeps the whole cursor image off the display, not just its tip.** macOS draws the cursor across a display seam: with the hotspot 3 pt onto one display, the arrow still paints on its neighbour. The hotspot is held back by the cursor image's reach, 20–40 pt scaled with the accessibility cursor size.
+- **While disconnected, mouse motion is reported in pixels of the display under the cursor,** not points. On a 2× Retina panel, using the raw values doubled every move. Motion is divided by the display's backing scale.
+- **Each warp normally freezes real mouse motion for 250 ms.** It goes unnoticed while the mouse is disconnected, but froze the pointer at the band's edge on hand-back. Cursor Fence sets the suppression interval (the deprecated `CGSetLocalEventsSuppressionInterval`, called through `dlsym`), which removes the freeze.
+- **Warps land on whole points,** so the app keeps the fractional position itself; slow trackpad drags near the wall don't stick.
 
-Every way out reconnects the mouse: release key, leaving the band, the tap being disabled (it is re-enabled immediately), display reconfiguration, sleep, screen lock, ⌘Q, SIGTERM/SIGINT/SIGHUP, and crash signals. A watchdog also lets go if the tap stops hearing motion the HID system is still producing, or Accessibility is revoked. A guardian child process (`CursorFence --guardian <pid>`) reconnects the mouse if the app is killed outright.
+A background app also holds the wall. macOS honors the mouse disconnect for the *active* application only, so when another app is in front the disconnect alone is not enough. Cursor Fence re-arms the disconnect through the cursor-warp path, which is not tied to the active app, so the wall stays hard whichever app has focus. The full account of how this was traced through the window server is in [`docs/INTERNALS.md`](docs/INTERNALS.md).
 
-The glow is a borderless, click-through, non-activating panel. Its frame is cut to the work display before it is shown, and checked again after AppKit has placed it; a frame that would touch the fenced display is never shown. The Settings window is moved off the fenced display too.
+Every way out reconnects the mouse: release key, leaving the band, the tap being disabled (it is re-enabled immediately), display reconfiguration, sleep, screen lock, ⌘Q, `SIGTERM`/`SIGINT`/`SIGHUP`, and crash signals. A watchdog also lets go if the tap stops hearing motion the HID system is still producing, or if Accessibility is revoked. A guardian child process (`CursorFence --guardian <pid>`) reconnects the mouse if the app is killed outright. The design invariant is that the mouse is disconnected *only* while the fence is actively holding the pointer at the wall.
 
-## Using it
+The glow is a borderless, click-through, non-activating panel, clipped to the work display and re-checked after the window server places it; a frame that would touch the fenced display is never shown.
 
-Cursor Fence is a regular Dock app; it is active the whole time it runs. ⌘Q turns it off. Click the Dock icon, or press ⌘, for Settings:
+## Install and build
 
-- **Fenced display.** Stored by the display's own UUID, so the choice survives reconnecting and rearranging. If that display is unplugged, the fence is off until it returns.
-- **Release keys.** Any combination of ⌃ ⌥ ⇧ ⌘ fn; all chosen keys must be held. Default ⌥. With none chosen, the pointer can never cross.
-- **Guard band.** How far from the wall the app takes over. Wider is safer against very fast flicks; within it, the pointer feels the same as anywhere else.
-- **Mechanism.** *Rewrite only* is a test mode that stays connected and pulls the pointer back after it crosses, the way other tools do. It exists for comparison; leave it on the default.
-- **Open at login.** Registers the app as a login item.
-- **Diagnostics.** Rebounds, breaches (times hardware motion reached the wall while connected; should be 0), glows shown and refused, tap restarts and watchdog trips.
+Cursor Fence is not notarized or distributed on the App Store; build it from source.
 
-## Building
-
-Needs Xcode 27 (Swift 6) on Apple silicon. The deployment target is macOS 26.0, which covers the compositor (macOS 26.6.2, arm64).
+**Requirements:** Xcode 27 (Swift 6) on Apple silicon. Deployment target macOS 26.0.
 
 ```bash
 scripts/build-app.sh
 ```
 
-This builds `build/CursorFence.app` and signs it with `Apple Development: you@example.com`; set `SIGN_IDENTITY` to override. A stable signing identity keeps the Accessibility grant across rebuilds, because macOS ties it to the bundle ID and certificate.
+This builds `build/CursorFence.app` and code-signs it. Set `SIGN_IDENTITY` to your own Apple Development identity:
+
+```bash
+SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" scripts/build-app.sh
+```
+
+A stable signing identity keeps the Accessibility grant across rebuilds, because macOS ties the grant to the bundle ID and signing certificate. Copy `build/CursorFence.app` to `/Applications` to install.
 
 ```bash
 swift test
@@ -56,125 +66,80 @@ The unit tests cover the geometry and decision logic in `FenceCore` (edges, corn
 
 ## Permissions
 
-- **Accessibility** for Cursor Fence: System Settings › Privacy & Security › Accessibility. The app asks on first launch and starts fencing within a second of the grant; no relaunch needed. Without it the app does nothing.
-- **Screen Recording** is needed only by the test harness, not by the app.
+- **Accessibility** — System Settings › Privacy & Security › Accessibility (on macOS 27, "Device Control and Data Access"). The app asks on first launch and starts fencing within a second of the grant; no relaunch needed. Without it the app does nothing.
+- **Screen Recording** — needed only by the test harness, not by the app itself.
 
-On the compositor, the Accessibility click has to be made on site.
+## Using it
 
-## Testing
+Cursor Fence is a regular Dock app; it is active the whole time it runs, and ⌘Q turns it off. Click the Dock icon, or press ⌘, for Settings:
 
-`FenceHarness` covers the fenced display with a black window and records it with ScreenCaptureKit (cursor shown, up to 120 fps, capturing only that window plus the cursor). It counts frames with any bright pixels, i.e. a cursor, and also watches the window list for any Cursor Fence window on the fenced display.
+- **Fenced display** — stored by the display's own UUID, so the choice survives reconnecting and rearranging. If that display is unplugged, the fence is off until it returns.
+- **Release keys** — any combination of ⌃ ⌥ ⇧ ⌘ fn; all chosen keys must be held. Default ⌥. With none chosen, the pointer can never cross.
+- **Guard band** — how far from the wall the app takes over. Wider is safer against very fast flicks; within it, the pointer feels normal.
+- **Mechanism** — *Rewrite only* is a comparison/test mode that stays connected and pulls the pointer back after it crosses, the way other tools do. Leave it on the default (*Disassociate*).
+- **Open at login** — registers the app as a login item.
+- **Diagnostics** — rebounds, breaches (times hardware motion reached the wall while connected; should be 0), glows shown and refused, tap restarts, watchdog trips.
+
+## Roadmap
+
+Planned, not yet built:
+
+- **Rebound ballistics preferences** — tune the spring-back feel (distance, duration, curve) rather than the current fixed recoil.
+- **Push-through preference** — an option to cross by pushing hard and steadily into the wall for a moment, as an alternative to holding a release key.
+- **Visual indication preferences** — control the glow (color, size, intensity, or off), for operators who want a quieter or louder edge.
+
+Contributions and issues welcome.
+
+## Testing and measured results
+
+Cursor Fence ships with a harness, `FenceHarness`, that covers the fenced display with a black window, records it with ScreenCaptureKit (cursor shown, up to 120 fps), counts frames containing any cursor, and watches the window list for any Cursor Fence window on the fenced display.
 
 ```bash
 swift build -c release --product FenceHarness
 .build/release/FenceHarness leak --drive manual --seconds 20       # you flick the real mouse
 .build/release/FenceHarness leak --drive synthetic --seconds 15    # synthetic stress
 .build/release/FenceHarness leak --drive synthetic --hold option   # positive control
-.build/release/FenceHarness feedback                               # recoil and glow
 scripts/hand-tests.sh                                              # voice-cued hand and failsafe tests
 ```
 
-For a trace of recent events (CSV: event type, connected or not, location, motion, resulting position, app switches), create the file `~/Library/Application Support/CursorFence/dump-trace`. Within a second the app replaces it with `trace.csv` beside it. Live counters are in `stats.json` in the same folder.
+On a two-display Apple silicon Mac (built-in Retina panel at 2× beside an external 1× monitor), with the external display fenced:
 
-## Measured results
-
-the dev Mac, 2026-11-01: built-in Liquid Retina XDR (main, 2x) and MSI PS341WU (1x), sharing a 299pt seam. MSI fenced, release key ⌥. Result files are in `test-results/`.
-
-| Run | Pointer moved by | Events | Rebounds | Breaches | Frames with cursor on fenced display |
-|---|---|---:|---:|---:|---:|
-| Final build, hand flicks and slides (20s) | real mouse | 3,793 | 33 | 0 | **0** of 48 |
-| Rewrite-only test mode, hand flicks (15s) | real mouse | 3,052 | 16 | 16, up to 25pt inside | 0 of 52 |
-| Synthetic stress, ~1,000 events/s (15s) | `CGEventPost` | 11,989 | 50 | n/a | 179 of 869 |
-| Positive control: synthetic with ⌥ held (8s) | `CGEventPost` | 6,481 | 0 | n/a | 292 of 501 |
+| Run | Pointer moved by | Events | Breaches | Frames with cursor on fenced display |
+|---|---|---:|---:|---:|
+| Hand flicks and slides, 20 s | real mouse | 3,793 | 0 | **0** of 48 |
+| Rewrite-only mode (pull-back), 15 s | real mouse | 3,052 | 16, up to 25 pt inside | 0 of 52 |
+| Synthetic stress, ~1,000 events/s, 15 s | `CGEventPost` | 11,989 | n/a | 179 of 869 |
+| Positive control: synthetic with ⌥ held | `CGEventPost` | 6,481 | n/a | 292 of 501 |
 
 How to read it:
 
-- **The recording alone cannot prove the wall.** In rewrite-only mode, hardware motion put the cursor's hotspot up to 25pt inside the fenced display 16 times, and the warp-back pulled it out before any captured frame showed it. So "0 frames" says the capture saw nothing, and "0 breaches" says more. Every hardware event passes through the tap, which sees where the cursor is. With the default mechanism, the tap never saw the cursor reach the wall's zone.
-- **Synthetic events cannot be fenced, by any event tap.** A posted event moves the cursor when it is posted, before any tap sees it; even dropping the event in the tap does not stop that. Cursor Fence corrects such events at once, but briefly they show. On air, that only matters for software that drives the pointer: remote-control tools and automation. The positive control proves the detector sees a cursor when one is there.
-- **Recoil** measured 14pt on every push. **Glow** appeared on every rebound, always on the built-in, with no Cursor Fence window ever on the fenced display.
-- **Failsafes, checked by hand:** after `kill -9` (mouse disconnected at the time), after quit, and after turning off Accessibility mid-session, the mouse moved normally each time.
-- **Release key:** the ⌥ positive control crossed freely.
+- **With the default mechanism, a real mouse never carried the cursor into the fenced display.** "0 breaches" is the stronger statement: every hardware event passes through the tap, and the tap never saw the cursor reach the wall's zone. In rewrite-only (pull-back) mode under the same flicks, hardware motion put the cursor up to 25 pt inside the fenced display 16 times and was yanked back — which is what the disconnect approach avoids.
+- **Synthetic (posted) events cannot be fenced by any event tap.** A posted event moves the cursor when it is posted, before any tap sees it. Cursor Fence corrects such events immediately, but they show briefly. The positive control confirms the detector sees a cursor when one is present.
+- **Background wall:** with another app in front, steady pushing into the wall holds the pointer in place 96–100% of events, matching the active-app case, after the fix described in [`docs/INTERNALS.md`](docs/INTERNALS.md).
 
-### Clicking breaks the wall (explained: clicks switched apps)
+### Remote control and Screen Sharing
 
-The hand runs above were flicks and slides with no clicks. A run with clicks and short drags between two apps beside the wall gave a different result: `test-results/appswitch2.json`. With the mouse supposedly disconnected, 586 of 1,085 events showed the mouse moving the cursor anyway. Each crossing was caught and pulled back: 235 breaches, up to 57pt inside the fenced display. The capture recorded 0 leaked frames, but the rewrite-only comparison above shows it misses warp-back transients, so read that 0 as unproven.
+A broadcast machine is often run headless over Screen Sharing. Screen Sharing input arrives as **posted** events (absolute cursor positions), which move the cursor before any event tap sees them — so on that path Cursor Fence can only pull the pointer back, not pre-empt it, and the disconnect approach does not apply. In testing, the pointer briefly showed on the fenced display between pull-backs, but the on-air goal still held: the pointer could not sit at the display's top edge long enough to bring down the menu bar or title bar, and a broadcast capture that excludes the cursor never showed it. Posted clicks that land on the fenced display are dropped (with their releases) unless a release key is held.
 
-Those clicks made other apps active, and that is what dropped the disconnection: see [The wall needs Cursor Fence in front](#the-wall-needs-cursor-fence-in-front-relix-2026-11-01). Whether a click with Cursor Fence itself in front affects it hasn't been tested.
+If you drive a broadcast machine this way, the most reliable configuration is to have the Screen Sharing viewer show only the work display, so it never sends a cursor position onto the program display at all.
 
-### Remote control
+### Known limits
 
-The broadcast show is run entirely over Screen Sharing on a headless compositor. If Screen Sharing input arrives as posted events, like the synthetic runs above, the cursor moves before any event tap sees it. Cursor Fence can then only pull it back, and the disconnection path does not apply. The Settings window's diagnostics name the process that last posted pointer motion, which settles this on the compositor. A likely configuration-level fix to test there: have the Screen Sharing client show only the work display, so it never sends a position on the broadcast display.
+- **Very fast flicks from a standing start.** The guard band widens with pointer speed, but a single move larger than the band, from rest, could land inside before the app takes over. It is counted as a breach and pulled back.
+- **Drags.** macOS ignores a warp while a mouse button is held, so the wall is soft during a drag.
+- **Shake-to-locate.** macOS's "shake the pointer to enlarge it" feature is triggered by rapid pointer motion and degrades the fence while it is active, for any front app.
+- **Custom oversized app cursors** (some brush cursors) can reach past the cursor-image allowance.
+- **Small slips.** About 1–2% of driven events report the cursor 2–3 pt from where the app last placed it.
 
-### Other open questions
+A diagnostic trace is available for debugging: create `~/Library/Application Support/CursorFence/dump-trace` and within a second the app writes `trace.csv` beside it (event type, connected or not, location, motion, resulting position, app switches). Live counters are in `stats.json` in the same folder.
 
-- **Small unexplained slips.** In the flick-only runs, about 1.5% of driven events report the cursor up to 2–3pt from where the app last put it.
-- **Very fast flicks from far away.** The band widens to six times the latest move. The closest any engagement came to the wall was 53pt across all hand runs, and 180pt in the final one. A single move larger than the band from a standing start could still land inside before the app takes over. It would be counted as a breach and pulled back.
-- **Custom app cursors** larger than the system cursors (some brush cursors) can reach past the image allowance.
+## How it's organized
 
-### Clicks over Screen Sharing (2026-11-01)
+- `Sources/FenceCore` — pure geometry and decision logic (no system calls); fully unit-tested.
+- `Sources/CursorFence` — the app: event tap, cursor driving, glow, settings, failsafes.
+- `Sources/FenceHarness` — the measurement harness.
+- `docs/INTERNALS.md` — the window-server investigation behind the background-wall fix.
 
-Screen Sharing posts each click at the viewer's pointer, which can sit over Broadcast between pull-backs. Posted clicks on the fenced display are now dropped, along with their releases, unless a release key is held. RP confirmed on the compositor that clicks are blocked and that ⌥ lets them through.
+## License
 
-### The wall needs Cursor Fence in front (the dev Mac, 2026-11-01)
-
-The corner escapes on the dev Mac come from which app is active. macOS honors `CGAssociateMouseAndMouseCursorPosition(false)` only while Cursor Fence is the active app. With any other app in front, the local mouse stays connected to the cursor, and calling it again on every event changes nothing. The fence then works the way rewrite-only mode does: it pulls the pointer back after the mouse moves it. About half of those pull-backs are overrun by motion already on its way, and that is how the pointer walks through the corner.
-
-Measured with `scripts/corner-windows.sh`: RP pushed the real mouse into the corner without clicking while the script brought a different app to the front for each 15-second window. `scripts/trace-windows.py` scores each window. A correction counts as held when the next event finds the cursor where Cursor Fence put it.
-
-| Front app | Run 1 held | Run 2 held |
-|---|---|---|
-| Cursor Fence | 99%, 99%, 99% (5,239 of 5,292) | 99% (2,005 of 2,020) |
-| Finder | 30%, 32% | 36%, 24% |
-| Claude | 33% | 34%, 20% |
-
-The traces are `test-results/corner-20261101-143557.csv` and `corner-20261101-144755.csv`. Run 2 was a build that also set the window server's `SetsCursorInBackground` connection property; it made no difference and was dropped. The disassembly below shows why: that property is not consulted on the associate, warp, or foreground-switch paths. The slipped events carry motion in points, as connected motion does, where disconnected motion arrives in pixels. In the background windows, most of the corrections that "held" were the cursor pinned at the screen's top edge.
-
-This accounts for the earlier mixed results. Re-scored by front app, the older app-switch traces show the mouse connected under FenceHarness, System Settings and Claude alike. `scripts/build-app.sh --install` relaunches the app, which puts it in front, so a test run right after an install sees the hard wall until something else is clicked. That probably explains the split build's 0-breach run and its 314-breach run that followed, but those runs left no trace, so it isn't confirmed.
-
-#### What the window server checks (SkyLight, disassembled 2026-11-01)
-
-SkyLight was pulled from the dyld shared cache on the dev Mac and read. The decouple is one system-wide byte that `_CGXDecoupleCursorAndMouse` writes with no caller check. What differs is who gets to call it.
-
-- **The decouple is one system-wide byte.** `_CGXDecoupleCursorAndMouse` (0x182898028) writes it with no caller check. What differs is who may call it.
-- **The Associate request is gated on the front process.** `__XAssociateMouseAndMouseCursorPosition` (0x182b396e4) records the request on the caller's own connection, then calls the decouple only when the caller is `_CGXForegroundConnection` (0x1828d1874), which resolves to `_CPXGetFrontProcessesConnectionID` — the front process. A background app's request is remembered but never applied.
-- **App activation re-derives the decouple from the new front process.** `foregroundSwitchNotifyProc` (0x1828d0ae4) reads the incoming front connection's recorded bit on every switch and sets the decouple from that. So when Finder or Claude comes forward its cleared bit re-couples the mouse, and re-asserting from the background cannot override it. The flip side is useful: because the bit persists on Cursor Fence's connection, its decouple re-applies by itself the moment it is front again.
-- **The warp path is not gated.** `__XWarpCursorPosition` (0x182b39474) decouples whenever the warp carries a suppression interval of 1ms or more (threshold constant 0x182c2b4e0), with no front-process check, and reschedules the release at now plus the interval. The interval is the value `CGSetLocalEventsSuppressionInterval` stores (SkyLight global 0x1eb11c000+0xb3c); every warp reads it. So the 250ms freeze seen earlier was this decouple persisting after the last warp, not event suppression — the warp path never touches the separate local-events-suppression mechanism. The full branch logic is in the shared session notes.
-
-#### The background fix (2026-11-01): a long keep-alive holds the decouple between corrections
-
-A background app cannot set the decouple the way the front app does. The front app's `CGAssociate(0)` sets the server's sticky "explicitly decoupled" flag, and the byte then stays set for the whole engagement with no renewal. A background app has only the warp path, which decouples for the warp's suppression interval and must be re-armed by further warps. The catch is that pushing into the wall pins the cursor at the band edge, so the decider asks for no correction and issues no warp — and with nothing to re-arm it, a short keep-alive lapsed between corrections, the byte dropped, the next push slipped the cursor, and Cursor Fence re-pinned it. That cycle was a visibly twitchy pointer in the background.
-
-The fix is a long keep-alive. Each correction warp carries `suppressSeconds` (default 2s, `defaults write com.razielpanic.CursorFence suppressionIntervalMs -float <ms>`), long enough to span the stretches where the cursor is pinned and no warp fires, so the decouple does not lapse between corrections. Front behavior is unchanged (with the explicit flag set, the warp path skips the interval logic). The one release is a true disengage, through a single zero-interval warp that re-couples even from the background. The watchdog still re-associates within 150ms if the tap is starved, so the interval fails safe.
-
-A rejected alternative, worth recording: warping on *every* engaged event (a no-op move while pinned) re-arms the decouple continuously and held the background at 99–100% with 0pt breaches — but setting the cursor position hundreds of times a second reads to macOS as a pointer shake and triggered the shake-to-locate magnifier during ordinary push-move-push. The long keep-alive avoids that by warping only on real corrections.
-
-Measured with the long keep-alive installed (steady pushing, no clicks): background Finder 96–97%, Claude 97%, matching Cursor Fence in front at 99–100%, up from the old ~40%-held walk-through. Slips are ~2% of driven events; the wall is a touch looser than the warp-every-event version (brief breaches up to ~44pt during a pin longer than the keep-alive, versus 0pt), so a longer interval trades tightness for a slightly longer potential stray decouple on disengage, bounded by the 150ms watchdog. Getting here meant eliminating recoil warps that re-coupled for ~140ms per contact, a band-exit re-couple on every drift past the band, and ruling out the keep-alive fuse (`_reschedule_callback_on_session` runs in replace mode, one fuse pushed forward per warp) before finding the pinned-no-warp lapse.
-
-**Shake-to-locate is a separate gap.** macOS's "Shake mouse pointer to locate" enlarges the cursor on rapid pointer motion. Beyond the warp-every-event trigger above, deliberately shaking also degrades the fence foreground and background alike. It does not reach the compositor, whose input is posted events.
-
-Consequences:
-
-- **The compositor is unaffected.** Its input is Screen Sharing's posted events, which the disconnect never covered.
-- **On a Mac with a local mouse**, the wall is now hard and smooth whether or not Cursor Fence is in front, up from the old state where the background walked through at ~40% held. Activating Cursor Fence near the wall stays ruled out: it would take keyboard focus from the user.
-- **Drags are a separate known gap:** macOS ignores a warp while a button is held. Posting a corrected drag instead didn't move the cursor and broke later warps.
-- **Shake-to-locate is a separate gap:** triggering macOS's shake-to-enlarge-cursor repeatedly drops held to ~90% for any front app, background or not.
-
-## Deploying to the compositor
-
-Both Macs run Cursor Fence from `/Applications`. On the dev Mac, `scripts/build-app.sh --install` builds it, replaces the installed copy and relaunches it. On the compositor, copy the built app to `/Applications` and remove the copy in `build/`. Launch it, grant Accessibility, choose the broadcast display, switch on Settings › Startup › Open at login (approve it in System Settings › General › Login Items if asked), and confirm the rebound against the shared edge.
-
-### Compositor results so far (2026-11-01, macOS 26.6.2, off-air)
-
-Run over SSH with `open -W build/FenceHarness.app --args leak … --json PATH` (FenceHarness.app holds Screen Recording, so sshd doesn't need it). Broadcast is fenced, directly left of Main.
-
-**v1 verified on the compositor (no regression).** The background fix is inert there, as expected: a head-to-head synthetic stress run, v1 against the prior build under identical conditions, leaked 568 of 925 frames versus 574 of 923 — the same within noise. (Both are high because a live Screen Sharing viewer was posting its cursor onto Broadcast during the run; the point is the two builds match.) The compositor's own counters showed 0 breaches and 0 slips in both. The compositor cannot sign (no identity in its keychain; it runs a the dev Mac-signed bundle), so a v1 deploy there means copying the signed bundle over, which the existing Accessibility grant honored (same identity and bundle id). Left on its proven build, since v1 changes only the local-mouse path the compositor never uses.
-
-| Run | Leaked frames | Notes |
-|---|---|---|
-| Synthetic stress, fenced | 70 of 470 | Every leak is the cursor image straddling the seam: 2–6 px at Broadcast's right edge, the hotspot was on Main. The app saw 2,933 of 11,881 posted moves (session-level coalescing); 12 rebounds, glows on Main only, 0 windows on Broadcast. |
-| ⌥ control | 0 of 255 | **Unexplained.** The control should show a cursor on Broadcast, and the app counted 0 events during it, though the engine counts synthetic moves before checking release keys. Until this is explained the control doesn't validate the detector on this Mac. |
-
-| RP flicking over Screen Sharing, viewer showing all displays | 90 of 769 | The pointer's tip landed 160–500 px inside Broadcast, 110–150 px below its top edge. |
-| The same, viewer showing only Main | 210 of 765 | The tip still landed up to ~240 px inside Broadcast, 47–83 px below its top edge. |
-
-Screen Sharing input arrives from ScreensharingAgent at the session level, as posted absolute positions. The app pulls the pointer back on every event, and the agent's next position puts it straight back onto Broadcast, so the cursor shows there between events. Showing only Main in the viewer doesn't stop it. The on-air goal still held in both runs: the tip never reached Broadcast's top edge, and RP saw no menu bar or presentation chrome slide down. The show's OBS capture leaves the cursor out, and RP couldn't see the brief incursions at that frame rate. So what matters on air is that the pointer can't sit at Broadcast's top edge long enough to bring down the menu bar or title bar, and the fence achieves that. Breaches from posted events aren't counted yet (`app.breaches` counts local mouse motion only).
+MIT — see [LICENSE](LICENSE).

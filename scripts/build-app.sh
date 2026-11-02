@@ -5,7 +5,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IDENTITY="${SIGN_IDENTITY:-Apple Development: you@example.com}"
+# Signs with your Apple Development identity. If you have exactly one, the bare
+# "Apple Development" matches it; otherwise set SIGN_IDENTITY to the full name,
+# e.g. SIGN_IDENTITY="Apple Development: Your Name (TEAMID)".
+IDENTITY="${SIGN_IDENTITY:-Apple Development}"
 APP=build/CursorFence.app
 
 swift build -c release --arch arm64 --product CursorFence
@@ -24,8 +27,8 @@ codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$APP"
 codesign --verify --strict --verbose=1 "$APP"
 echo "built $APP"
 
-# --install: replace the copy in /Applications and relaunch it. Both Macs run
-# Cursor Fence from there; a second copy elsewhere confuses Login Items and
+# --install: replace the copy in /Applications and relaunch it. Run Cursor Fence
+# from /Applications; a second copy elsewhere confuses Login Items and
 # Accessibility. A rebuild may need Accessibility toggled off and on again.
 if [[ "${1:-}" == "--install" ]]; then
   osascript -e 'quit app id "com.razielpanic.CursorFence"' 2>/dev/null || true
