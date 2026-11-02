@@ -1,5 +1,9 @@
 # Cursor Fence
 
+![Platform: macOS 26+](https://img.shields.io/badge/platform-macOS%2026%2B-blue)
+![Architecture: Apple silicon](https://img.shields.io/badge/arch-Apple%20silicon-black)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+
 **Keeps the mouse pointer off one display — a hard wall, built and tested for live broadcast output.**
 
 The pointer stops at the fenced display's edge as if it hit a wall: it springs back a few points and a short glow appears on your side of the edge. Hold a release key (⌥ by default) to cross. Leaving the fenced display is always free.
