@@ -10,6 +10,8 @@ The pointer stops at the fenced display's edge as if it hit a wall: it springs b
 
 Cursor Fence was built for a live-broadcast setup, where a full-screen program output sits beside the operator's work monitor. In native full-screen, macOS reveals the menu bar and window title bar only when the pointer reaches that screen's top edge — so keeping the pointer off the broadcast screen keeps stray cursors, menus and window chrome off the air.
 
+It matters most when the program feed leaves the Mac as an ordinary display — HDMI or DisplayPort to a switcher, projector or capture input. A dedicated video interface such as a Blackmagic DeckLink, which Final Cut Pro offers as an *A/V Output* device, carries only the video an app sends it, so the pointer and the desktop never reach it. Without one, the program output is a desktop display like any other, and Cursor Fence gives it the same protection.
+
 - **A real wall, not a pull-back.** Most tools let the cursor cross and then move it back, so a frame of cursor reaches the other display. Cursor Fence stops the mouse from moving the cursor in the first place (see [How it works](#how-it-works)).
 - **Tested against Screen Sharing and remote control.** Broadcast machines are often driven headless over Screen Sharing, where the input model is different. Cursor Fence documents exactly what holds and what doesn't on that path (see [Remote control and Screen Sharing](#remote-control-and-screen-sharing)).
 - **Honest about its limits.** Every measured result, failure mode and open question is written down, with the method to reproduce it.
@@ -91,6 +93,9 @@ Planned, not yet built:
 - **Rebound ballistics preferences** — tune the spring-back feel (distance, duration, curve) rather than the current fixed recoil.
 - **Push-through preference** — an option to cross by pushing hard and steadily into the wall for a moment, as an alternative to holding a release key.
 - **Visual indication preferences** — control the glow (color, size, intensity, or off), for operators who want a quieter or louder edge.
+- **Choose the fenced display from an arrangement diagram** — pick it from the displays as they are laid out, the way System Settings › Displays shows them, so the right screen is obvious when two share a name.
+- **Program-display hygiene** — small protections for the fenced display beyond the pointer: an optional solid-black or slate desktop picture on it, an idle slate between shows, a warning when it is the main display (where notification banners and the primary menu bar land), and keeping it awake while the fence is on.
+- **Accept genlock** — Mac displays can be genlocked as of the MacBook Pro with the PROLED XDR touch display (announced October 2026). What accepting genlock means for the fence is still to be worked out.
 
 Contributions and issues welcome.
 

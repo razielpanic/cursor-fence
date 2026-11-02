@@ -6,9 +6,8 @@ Thanks for your interest in Cursor Fence. Issues and pull requests are welcome.
 
 Cursor Fence is deliberately focused: keep the mouse pointer off one display,
 reliably enough for live broadcast output. Changes that serve that goal — or the
-items on the README's roadmap (rebound ballistics, push-through, visual-indication
-preferences) — are the easiest to land. Broader "mouse utility" features are
-likely out of scope; please open an issue to discuss before building one.
+items on the README's roadmap — are the easiest to land. Broader "mouse utility"
+features are likely out of scope; please open an issue to discuss before building one.
 
 ## Building and testing
 
